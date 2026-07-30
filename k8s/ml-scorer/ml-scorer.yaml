@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-scorer
+  namespace: protean-prod
+  labels:
+    app: ml-scorer
+    tier: microservice
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ml-scorer
+  template:
+    metadata:
+      labels:
+        app: ml-scorer
+    spec:
+      securityContext:
+        runAsUser: 1001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ml-scorer
+          image: protean-shapes:2.0.0-enterprise
+          command: ["python", "-m", "app.ml.scorer", "--server", "--port", "8083"]
+          ports:
+            - containerPort: 8083
+          env:
+            - name: MODEL_PATH
+              value: "/app/models/xgboost_protean_v2.joblib"
+            - name: SHAP_BACKGROUND
+              value: "/app/models/shap_background.npy"
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 4Gi
+            limits:
+              cpu: 4000m
+              memory: 16Gi
+          volumeMounts:
+            - name: models
+              mountPath: /app/models
+              readOnly: true
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: model-pvc
+        - name: certs
+          secret:
+            secretName: protean-mtls-certs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-scorer
+  namespace: protean-prod
+spec:
+  selector:
+    app: ml-scorer
+  ports:
+    - port: 8083
+      targetPort: 8083
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-pvc
+  namespace: protean-prod
+spec:
+  accessModes:
+    - ReadOnlyMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: gp3-encrypted

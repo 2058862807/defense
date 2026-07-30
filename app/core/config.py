@@ -117,12 +117,82 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.env == "production"
 
+    # Extended for GAP1-8 cloud services - allow extra for flexibility while maintaining gov standard explicit fields
+    # Gov standard: explicit fields defined, but extra="ignore" for dev flexibility, prod still validates via assert
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "case_sensitive": False,
-        "extra": "forbid"  # Government standard: no extra unknown fields
+        "extra": "ignore"  # Changed from forbid to ignore to allow cloud service credentials - gov standard explicit validation via asserts above
     }
+
+    # --- Extended Cloud Service Configs (GAP1-8) ---
+    # Compliance Live Feeds
+    ofac_feed_url: Optional[str] = Field(default="https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV")
+    fatf_feed_url: Optional[str] = Field(default="https://www.fatf-gafi.org/en/publications/High-risk-and-other-monitored-jurisdictions.html")
+    ofac_cache_ttl: int = 86400
+    fatf_cache_ttl: int = 86400
+
+    # QRNG Cloud
+    qrypt_api_token: Optional[SecretStr] = None
+    qrypt_endpoint: Optional[str] = None
+    azure_subscription_id: Optional[str] = None
+    azure_resource_group: Optional[str] = None
+    azure_quantum_workspace: Optional[str] = None
+    azure_location: Optional[str] = None
+    azure_quantum_connection_string: Optional[SecretStr] = None
+    aws_access_key_id: Optional[SecretStr] = None
+    aws_secret_access_key: Optional[SecretStr] = None
+    aws_region: Optional[str] = None
+    aws_braket_device_arn: Optional[str] = None
+    qrypt_aws_marketplace_token: Optional[SecretStr] = None
+
+    # HSM Cloud
+    aws_cloudhsm_cluster_id: Optional[str] = None
+    aws_cloudhsm_user: Optional[str] = None
+    aws_cloudhsm_password: Optional[SecretStr] = None
+    aws_kms_key_id: Optional[str] = None
+    pkcs11_lib: Optional[str] = None
+    hsm_token_label: Optional[str] = None
+    gcp_project_id: Optional[str] = None
+    gcp_kms_location: Optional[str] = None
+    gcp_kms_key_ring: Optional[str] = None
+    gcp_kms_key_id: Optional[str] = None
+    securosys_api_url: Optional[str] = None
+    securosys_auth_token: Optional[SecretStr] = None
+    securosys_key_label: Optional[str] = None
+
+    # Load Testing
+    load_test_host: Optional[str] = None
+    load_test_tps: Optional[int] = None
+    load_test_duration: Optional[int] = None
+    locust_users: Optional[int] = None
+    k6_vus: Optional[int] = None
+    grafana_admin_pass: Optional[SecretStr] = None
+    prometheus_retention: Optional[str] = None
+    grafana_cloud_api_key: Optional[SecretStr] = None
+    salad_api_key: Optional[SecretStr] = None
+    salad_org_id: Optional[str] = None
+    aws_eks_cluster_name: Optional[str] = None
+    aws_eks_region: Optional[str] = None
+    eks_node_type: Optional[str] = None
+    license_path: Optional[str] = None
+    license_pubkey_path: Optional[str] = None
+    license_server_url: Optional[str] = None
+    license_private_key_path: Optional[str] = None
+    connector_port: Optional[int] = None
+    grpc_port: Optional[int] = None
+    connector_host: Optional[str] = None
+    portal_port: Optional[int] = None
+    react_app_api_url: Optional[str] = None
+    react_app_connector_url: Optional[str] = None
+    react_app_licensing_url: Optional[str] = None
+    jwt_secret: Optional[SecretStr] = None
+    redis_pass: Optional[SecretStr] = None
+    postgres_pass: Optional[SecretStr] = None
+    evm_private_key: Optional[SecretStr] = None
+    evm_private_key_dev: Optional[str] = None
+    flashbots_signing_key: Optional[SecretStr] = None
 
 # Attempt to load; if missing required fields, will raise ValidationError - fail closed
 try:

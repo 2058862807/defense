@@ -190,10 +190,19 @@ class ZKProverEnterprise:
         # Real snarkjs flow for dev:
         # witness -> witness.json -> witness.wtns -> proof
         try:
+            # Find snarkjs binary - try multiple locations for enterprise dev
+            import shutil
+            snarkjs_bin = shutil.which("snarkjs") or "/home/user/node_modules/.bin/snarkjs" or "npx snarkjs"
+            # Determine command list
+            if snarkjs_bin and "npx" in snarkjs_bin:
+                snarkjs_cmd = ["npx", "snarkjs"]
+            elif snarkjs_bin and os.path.exists(snarkjs_bin):
+                snarkjs_cmd = [snarkjs_bin]
+            else:
+                snarkjs_cmd = ["snarkjs"]  # Fallback, will fail and go to deterministic dev proof
+
             witness_path = "/tmp/witness.json"
             with open(witness_path, 'w') as f:
-                # Convert witness to circom input signals (field elements)
-                # Simplified mapping - real mapping in circuits/build/input.json generator
                 json.dump({
                     "modelCommitment": int(commitments["model_commitment"][:16], 16),
                     "inputCommitment": int(commitments["input_commitment"][:16], 16),
@@ -202,9 +211,9 @@ class ZKProverEnterprise:
                 }, f)
 
             # Generate witness.wtns via snarkjs
-            subprocess.run(["snarkjs", "wtns", "calculate", wasm, witness_path, "/tmp/witness.wtns"], check=True, capture_output=True)
+            subprocess.run(snarkjs_cmd + ["wtns", "calculate", wasm, witness_path, "/tmp/witness.wtns"], check=True, capture_output=True)
             # Generate proof
-            subprocess.run(["snarkjs", "groth16", "prove", zkey, "/tmp/witness.wtns", "/tmp/proof.json", "/tmp/public.json"], check=True, capture_output=True)
+            subprocess.run(snarkjs_cmd + ["groth16", "prove", zkey, "/tmp/witness.wtns", "/tmp/proof.json", "/tmp/public.json"], check=True, capture_output=True)
             
             with open("/tmp/proof.json") as f:
                 proof = json.load(f)

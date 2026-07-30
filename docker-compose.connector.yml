@@ -1,0 +1,189 @@
+version: '3.8'
+
+services:
+  connector:
+    build:
+      context: .
+      dockerfile: Dockerfile.connector
+    container_name: protean-connector
+    ports:
+      - "8081:8081"   # REST
+      - "50051:50051" # gRPC
+    env_file:
+      - .env
+    environment:
+      - ENV=production
+      - CONNECTOR_PORT=8081
+      - GRPC_PORT=50051
+      - LICENSE_SERVER_URL=http://licensing:8085
+      - REDIS_URL=redis://redis:6380/0
+      - POSTGRES_URL=postgresql://protean:protean@postgres:5432/protean?sslmode=require
+      - KAFKA_BROKERS=kafka:9092
+      - ZK_CIRCUIT_HASH=db9cf5c741a4fa79514699a37a309ce0350e35a4f0491a742e31591b3018ef7a
+      - QRYPT_API_TOKEN=${QRYPT_API_TOKEN}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - GCP_PROJECT_ID=${GCP_PROJECT_ID}
+    depends_on:
+      - redis
+      - postgres
+      - licensing
+      - api
+    volumes:
+      - ./licenses:/app/licenses:ro
+      - ./certs:/certs:ro
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - protean-net
+
+  licensing:
+    build:
+      context: .
+      dockerfile: Dockerfile.licensing
+    container_name: protean-licensing
+    ports:
+      - "8085:8085"
+    env_file:
+      - .env
+    environment:
+      - ENV=production
+      - LICENSE_PUBKEY_PATH=/app/licenses/licensing_pubkey.pem
+      - LICENSE_PATH=/app/licenses/enterprise.license.json
+    volumes:
+      - ./licenses:/app/licenses:ro
+      - ./certs:/certs:ro
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    networks:
+      - protean-net
+
+  portal:
+    build:
+      context: .
+      dockerfile: Dockerfile.portal
+    container_name: protean-portal
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - REACT_APP_API_URL=http://localhost:8080
+      - REACT_APP_CONNECTOR_URL=http://localhost:8081
+      - REACT_APP_LICENSING_URL=http://localhost:8085
+    depends_on:
+      - connector
+      - licensing
+    restart: unless-stopped
+    networks:
+      - protean-net
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: protean-api
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    volumes:
+      - ./licenses:/app/licenses:ro
+      - ./certs:/certs:ro
+    restart: unless-stopped
+    networks:
+      - protean-net
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: protean-postgres
+    environment:
+      POSTGRES_USER: protean
+      POSTGRES_PASSWORD: ${POSTGRES_PASS:-protean_secure}
+      POSTGRES_DB: protean
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - protean-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: protean-redis
+    command: redis-server --requirepass ${REDIS_PASS:-protean_secure} --tls-port 6380 --port 0 --tls-cert-file /certs/tls.crt --tls-key-file /certs/tls.key --tls-ca-cert-file /certs/ca.crt
+    volumes:
+      - redisdata:/data
+      - ./certs:/certs:ro
+    ports:
+      - "6380:6380"
+    restart: unless-stopped
+    networks:
+      - protean-net
+
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: protean-kafka
+    environment:
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+    ports:
+      - "9092:9092"
+    restart: unless-stopped
+    networks:
+      - protean-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: protean-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - promdata:/prometheus
+    restart: unless-stopped
+    networks:
+      - protean-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: protean-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASS:-admin}
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - protean-net
+
+volumes:
+  pgdata:
+  redisdata:
+  promdata:
+  grafanadata:
+
+networks:
+  protean-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

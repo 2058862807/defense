@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zk-prover
+  namespace: protean-prod
+  labels:
+    app: zk-prover
+    tier: microservice
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: zk-prover
+  template:
+    metadata:
+      labels:
+        app: zk-prover
+    spec:
+      securityContext:
+        runAsUser: 1001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: zk-prover
+          image: protean-shapes:2.0.0-enterprise
+          command: ["python", "-m", "app.zk.prover", "--server", "--port", "5000"]
+          ports:
+            - containerPort: 5000
+              name: grpc
+            - containerPort: 8081
+              name: http
+          env:
+            - name: ENV
+              value: "production"
+            - name: ZK_MODE
+              value: "production"
+            - name: CIRCUIT_WASM
+              value: "/app/circuits/build/fairness_policy.wasm"
+            - name: CIRCUIT_ZKEY
+              value: "/app/circuits/build/fairness_policy_final.zkey"
+            - name: QRYPT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-credentials
+                  key: QRYPT_API_TOKEN
+                  optional: true
+          volumeMounts:
+            - name: circuits
+              mountPath: /app/circuits/build
+              readOnly: true
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 4Gi
+            limits:
+              cpu: 4000m
+              memory: 16Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: circuits
+          configMap:
+            name: circuit-config
+        - name: certs
+          secret:
+            secretName: protean-mtls-certs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zk-prover
+  namespace: protean-prod
+spec:
+  selector:
+    app: zk-prover
+  ports:
+    - name: grpc
+      port: 5000
+      targetPort: 5000
+    - name: http
+      port: 8081
+      targetPort: 8081
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: zk-prover-hpa
+  namespace: protean-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: zk-prover
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80

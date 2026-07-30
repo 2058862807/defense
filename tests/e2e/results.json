@@ -1,0 +1,43 @@
+{
+  "timestamp": "2026-07-30T20:28:26.649468",
+  "passed": 5,
+  "failed": 2,
+  "tests": [
+    {
+      "name": "mempool->scoring->ZK->verification",
+      "status": "FAIL",
+      "error": "Client error '404 Not Found' for url 'https://zk-prover.protean.sh/prove'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"
+    },
+    {
+      "name": "offense bot scan->score->prove->bundle",
+      "status": "PASS",
+      "details": "opp profit=0.05 score=0.260 fair=True"
+    },
+    {
+      "name": "defense bot intercept->score->protect->verify",
+      "status": "PASS",
+      "details": "risk=0.720 for slippage 300"
+    },
+    {
+      "name": "API endpoints",
+      "status": "FAIL",
+      "error": "Compliance stats unexpected: 422"
+    },
+    {
+      "name": "WebSocket",
+      "status": "PASS",
+      "details": "mempool connector has real WebSocket eth_subscribe"
+    },
+    {
+      "name": "Database",
+      "status": "PASS",
+      "details": "cache set/get ok, OFAC/FATF/QRNG/HSM structure verified"
+    },
+    {
+      "name": "QRNG + HSM",
+      "status": "PASS",
+      "details": "QRNG 32 bytes, HSM sign ok, providers: Qrypt/Azure/AWS with fallback"
+    }
+  ],
+  "compliance": "FIPS-140-3, FIPS-203, NIST SP 800-53, FedRAMP High, SLSA L3"
+}

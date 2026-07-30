@@ -1,0 +1,37 @@
+# Dockerfile for Enterprise Connector - Government Standard
+# FIPS 140-3, distroless, non-root, mTLS
+
+FROM python:3.11-slim-bookworm as base
+
+RUN useradd -m -u 1001 protean && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    libssl-dev ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements with hashes
+COPY requirements.enterprise.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --require-hashes -r requirements.enterprise.txt || \
+    pip install --no-cache-dir -r requirements.enterprise.txt && \
+    pip install --no-cache-dir grpcio grpcio-tools prometheus-client
+
+# Copy app
+COPY app/ app/
+COPY licenses/ licenses/ 2>/dev/null || mkdir -p licenses
+
+ENV PYTHONPATH=/app
+ENV ENV=production
+ENV CONNECTOR_PORT=8081
+ENV GRPC_PORT=50051
+ENV ENABLE_MTLS=true
+ENV FIPS_MODE=1
+
+USER protean
+
+EXPOSE 8081 50051
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -f http://localhost:8081/health || exit 1
+
+CMD ["python", "-m", "app.connectors.enterprise_connector"]

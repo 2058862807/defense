@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: defense-bot
+  namespace: protean-prod
+  labels:
+    app: defense-bot
+    tier: microservice
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: defense-bot
+  template:
+    metadata:
+      labels:
+        app: defense-bot
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "protean-prod"
+    spec:
+      serviceAccountName: protean-bot
+      securityContext:
+        runAsUser: 1001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: defense-bot
+          image: protean-shapes:2.0.0-enterprise
+          command: ["python", "-m", "app.bots.defense_bot", "--iterations", "1000000"]
+          env:
+            - name: ENV
+              value: "production"
+            - name: BOT_MODE
+              value: "defense"
+            - name: KAFKA_BROKERS
+              value: "kafka:9092"
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: redis-config
+                  key: REDIS_URL
+            - name: QRYPT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-credentials
+                  key: QRYPT_API_TOKEN
+                  optional: true
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 2Gi
+            limits:
+              cpu: 4000m
+              memory: 8Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: certs
+          secret:
+            secretName: protean-mtls-certs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: defense-bot
+  namespace: protean-prod
+spec:
+  selector:
+    app: defense-bot
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: defense-bot-pdb
+  namespace: protean-prod
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: defense-bot

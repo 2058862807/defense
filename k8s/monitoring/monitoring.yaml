@@ -1,0 +1,127 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: protean-monitoring
+  labels:
+    app: monitoring
+
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: prometheus
+  namespace: protean-monitoring
+spec:
+  chart: prometheus
+  repo: https://prometheus-community.github.io/helm-charts
+  targetNamespace: protean-monitoring
+  valuesContent: |-
+    alertmanager:
+      enabled: true
+    server:
+      persistentVolume:
+        size: 100Gi
+        storageClass: gp3-encrypted
+      extraFlags:
+        - --storage.tsdb.retention.time=30d
+    extraScrapeConfigs: |
+      - job_name: 'protean-api'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - protean-prod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_app]
+            regex: api|offense-bot|defense-bot|zk-prover|regulatory|ml-scorer|connector|licensing
+            action: keep
+
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: grafana
+  namespace: protean-monitoring
+spec:
+  chart: grafana
+  repo: https://grafana.github.io/helm-charts
+  targetNamespace: protean-monitoring
+  valuesContent: |-
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClassName: gp3-encrypted
+    adminPassword: "change_me_grafana_admin"
+    datasources:
+      datasources.yaml:
+        apiVersion: 1
+        datasources:
+          - name: Prometheus
+            type: prometheus
+            url: http://prometheus-server.protean-monitoring.svc:80
+            access: proxy
+    dashboardProviders:
+      dashboardproviders.yaml:
+        apiVersion: 1
+        providers:
+          - name: 'protean'
+            orgId: 1
+            folder: ''
+            type: file
+            disableDeletion: false
+            editable: true
+            options:
+              path: /var/lib/grafana/dashboards/protean
+    dashboards:
+      protean:
+        protean-defense:
+          gnetId: 1860
+          revision: 30
+          datasource: Prometheus
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards-protean
+  namespace: protean-monitoring
+data:
+  protean-defense.json: |
+    {
+      "title": "Protean Defense Enterprise",
+      "panels": [
+        {"title": "MEV Risk Score", "type": "graph", "targets": [{"expr": "histogram_quantile(0.95, protean_mev_risk_score)"}]},
+        {"title": "ZK Proofs", "type": "stat", "targets": [{"expr": "sum(protean_zk_proofs_total)"}]},
+        {"title": "OFAC Checks", "type": "graph", "targets": [{"expr": "rate(protean_ofac_checks_total[5m])"}]},
+        {"title": "QRNG Fallback Rate", "type": "graph", "targets": [{"expr": "rate(protean_qrng_fallback_total[5m])"}]},
+        {"title": "HSM Cloud Success", "type": "graph", "targets": [{"expr": "rate(protean_hsm_cloud_success_total[5m])"}]},
+        {"title": "Throughput TPS", "type": "graph", "targets": [{"expr": "sum(rate(protean_requests_total[1m]))"}]},
+        {"title": "Error Rate", "type": "graph", "targets": [{"expr": "sum(rate(protean_requests_total{status=~\"5..\"}[1m])) / sum(rate(protean_requests_total[1m]))"}]}
+      ]
+    }
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: protean-services
+  namespace: protean-monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      tier: microservice
+  namespaceSelector:
+    matchNames:
+      - protean-prod
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+      scheme: https
+      tlsConfig:
+        caFile: /etc/prometheus/secrets/protean-mtls-certs/ca.crt
+        certFile: /etc/prometheus/secrets/protean-mtls-certs/tls.crt
+        keyFile: /etc/prometheus/secrets/protean-mtls-certs/tls.key
+        insecureSkipVerify: false

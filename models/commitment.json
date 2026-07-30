@@ -1,0 +1,9 @@
+{
+  "model_hash": "9d271370d0c4a2f66dc4cd684d949341ab3ce7b9e3568eba79604bdb2fb7c593",
+  "version": "2.0.0-enterprise",
+  "training_data_hash": "1325128b3245b8e756f7bf8276487159eedc74bc1cee0c7cf66bd6aba61dda8a",
+  "policy_version": "1.2.0",
+  "fips_compliance": "FIPS-140-3",
+  "built_by": "protean-training-pipeline",
+  "slsa_provenance": "SLSA L3"
+}

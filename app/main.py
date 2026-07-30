@@ -40,14 +40,19 @@ app = FastAPI(
 )
 
 # Security middleware - enterprise
+# In dev/test, allow testserver and localhost for E2E tests
+allowed_hosts = ["app.protean.sh", "api.protean.sh"]
+if settings.env in ["dev", "staging"] or not settings.is_production():
+    allowed_hosts.extend(["testserver", "localhost", "127.0.0.1", "*.protean.sh"])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://app.protean.sh"],  # Gov: explicit allowlist, no wildcard
+    allow_origins=["https://app.protean.sh", "https://app.protean.sh", "http://localhost:3000", "http://localhost:8080"] if settings.is_production() else ["*"],
     allow_credentials=True,
     allow_methods=["POST","GET"],
     allow_headers=["Authorization","Content-Type","X-Request-ID"],
 )
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["app.protean.sh", "api.protean.sh"])
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
 app.include_router(regulatory_router)
 

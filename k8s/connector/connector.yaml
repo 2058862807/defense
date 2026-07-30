@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: connector
+  namespace: protean-prod
+  labels:
+    app: connector
+    tier: microservice
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: connector
+  template:
+    metadata:
+      labels:
+        app: connector
+      annotations:
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/role: "protean-prod"
+    spec:
+      serviceAccountName: protean-connector
+      securityContext:
+        runAsUser: 1001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: connector
+          image: protean-connector:2.0.0-enterprise
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+              name: http
+            - containerPort: 50051
+              name: grpc
+          env:
+            - name: ENV
+              value: "production"
+            - name: CONNECTOR_PORT
+              value: "8081"
+            - name: GRPC_PORT
+              value: "50051"
+            - name: LICENSE_SERVER_URL
+              value: "http://licensing:8085"
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: redis-config
+                  key: REDIS_URL
+            - name: QRYPT_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloud-credentials
+                  key: QRYPT_API_TOKEN
+                  optional: true
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: certs
+          secret:
+            secretName: protean-mtls-certs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: connector
+  namespace: protean-prod
+spec:
+  selector:
+    app: connector
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: protean-connector
+  namespace: protean-prod
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: connector-ingress
+  namespace: protean-prod
+  annotations:
+    nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+    nginx.ingress.kubernetes.io/auth-tls-secret: "protean-prod/protean-mtls-certs"
+spec:
+  tls:
+    - hosts:
+        - connector.protean.sh
+      secretName: protean-mtls-certs
+  rules:
+    - host: connector.protean.sh
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: connector
+                port:
+                  number: 8081

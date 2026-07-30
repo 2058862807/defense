@@ -1,0 +1,29 @@
+# Dockerfile for Licensing Server - Government Standard
+FROM python:3.11-slim-bookworm as base
+
+RUN useradd -m -u 1001 protean && \
+    apt-get update && apt-get install -y --no-install-recommends libssl-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.enterprise.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.enterprise.txt && \
+    pip install --no-cache-dir prometheus-client hvac
+
+COPY app/ app/
+COPY licenses/ licenses/ 2>/dev/null || mkdir -p licenses
+
+ENV PYTHONPATH=/app
+ENV ENV=production
+ENV LICENSE_SERVER_PORT=8085
+ENV ENABLE_MTLS=true
+
+USER protean
+
+EXPOSE 8085
+
+HEALTHCHECK --interval=30s CMD curl -f http://localhost:8085/health || exit 1
+
+CMD ["python", "-m", "app.licensing.server"]
