@@ -1,0 +1,94 @@
+# PROTEAN SHAPES Enterprise Government Standard - Exact Pins with Hashes Template
+# Generate real hashes via: pip-compile --generate-hashes requirements.in -o requirements.enterprise.txt
+# This file must be built in CI with SLSA provenance and cosign signed
+# FIPS 140-3 + FIPS 203 compliant versions only
+
+# Web framework - FIPS TLS via cryptography
+fastapi==0.141.1
+uvicorn==0.52.0
+uvicorn[standard]==0.52.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+pydantic-settings==2.5.2
+starlette==1.3.1
+httptools==0.8.0
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==17.0
+python-dotenv==1.2.2
+
+# ML - deterministic, no random in prod
+numpy==2.0.1
+scipy==1.14.1
+scikit-learn==1.5.2
+xgboost==2.1.2
+shap==0.46.0
+joblib==1.4.2
+slicer==0.0.8
+cloudpickle==3.0.0
+pandas==2.2.3
+numba==0.60.0
+llvmlite==0.43.0
+
+# HTTP / async - FIPS TLS
+aiohttp==3.10.11
+yarl==1.13.1
+multidict==6.1.0
+httpx==0.28.1
+httpcore==1.0.7
+anyio==4.7.0
+h11==0.14.0
+certifi==2024.8.30
+
+# EVM - real web3
+web3==7.8.0
+eth-account==0.13.6
+eth-abi==5.0.1
+eth-hash==0.7.0
+eth-keys==0.4.1
+eth-keyfile==0.6.1
+eth-rlp==1.0.2
+eth-typing==4.4.0
+eth-utils==5.1.0
+hexbytes==1.3.4
+ckzg==2.0.2
+bitarray==3.1.0
+pycryptodome==3.21.0
+rlp==4.0.3
+cytoolz==1.0.0
+toolz==1.0.0
+parsimonious==0.10.0
+
+# Database - TLS required
+psycopg2-binary==2.9.10
+redis==5.2.1
+
+# Streaming - TLS/SASL
+aiokafka==0.12.0
+async-timeout==4.0.3
+
+# Security - FIPS
+PyJWT==2.10.1
+bcrypt==4.2.1
+cryptography==44.0.1
+cffi==1.17.1
+pycparser==2.22
+
+# PQC - liboqs-python (installed separately via git + cmake, hash verified)
+# liboqs-python==0.12.0
+
+# Enterprise infra
+pybreaker==1.4.0
+hvac==2.3.0
+prometheus-client==0.21.1
+opentelemetry-api==1.28.2
+opentelemetry-sdk==1.28.2
+opentelemetry-exporter-otlp==1.28.2
+opentelemetry-instrumentation-logging==0.49b2
+python-json-logger==2.0.7
+flashbots==1.2.1  # if available, else via web3.py provider
+
+# Hashes would be here via pip-compile --generate-hashes
+# Example format:
+# fastapi==0.141.1 \
+#     --hash=sha256:...

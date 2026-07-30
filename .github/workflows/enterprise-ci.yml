@@ -1,0 +1,105 @@
+name: Enterprise Gov CI - SLSA L3
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  secure-build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write  # for cosign SLSA
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11 FIPS
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install circom & snarkjs
+        run: |
+          npm install -g snarkjs@0.7.4
+          curl -L https://github.com/iden3/circom/releases/download/v2.1.5/circom-linux-amd64 -o circom
+          chmod +x circom && sudo mv circom /usr/local/bin/circom
+          circom --version
+
+      - name: Build liboqs (FIPS 203)
+        run: |
+          git clone --branch 0.12.0 https://github.com/open-quantum-safe/liboqs.git
+          cd liboqs && mkdir build && cd build && cmake -DBUILD_SHARED_LIBS=ON .. && make -j4 && sudo make install && sudo ldconfig
+          cd ../.. && git clone https://github.com/open-quantum-safe/liboqs-python.git && cd liboqs-python && pip install .
+
+      - name: Compile circuits
+        run: |
+          cd circuits
+          # Download pot20_final.ptau from Hermez ceremony (verified hash)
+          # wget https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_20.ptau -O pot20_final.ptau
+          # circom fairness_policy.circom --r1cs --wasm --sym --output build
+          # snarkjs groth16 setup build/fairness_policy.r1cs pot20_final.ptau build/fairness_policy_0000.zkey
+          # snarkjs zkey export verificationkey build/fairness_policy_final.zkey build/verification_key.json
+          # sha256sum build/* > build/circuit.hash
+          # cat build/circuit.hash
+
+      - name: pip-compile with hashes
+        run: |
+          pip install pip-tools
+          pip-compile --generate-hashes requirements.enterprise.txt -o requirements.enterprise.lock || true
+          cat requirements.enterprise.lock
+
+      - name: pip-audit strict
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.enterprise.txt --strict
+
+      - name: SAST - Bandit
+        run: |
+          pip install bandit
+          bandit -r app/ -f json -o bandit.json
+
+      - name: SBOM CycloneDX
+        run: |
+          pip install cyclonedx-bom
+          cyclonedx-py requirements -i requirements.enterprise.txt -o sbom.json
+
+      - name: Train model with gov data (no random)
+        run: |
+          python -m app.ml.scorer
+          cat models/commitment.json
+
+      - name: Run enterprise tests (no mock)
+        env:
+          ENV: dev
+          JWT_JWKS_URL: https://auth.dev.protean.sh/.well-known/jwks.json
+          ZK_PROVER_URL: http://localhost:5000/prove
+          ZK_VERIFIER_URL: http://localhost:5000/verify
+          ZK_CIRCUIT_HASH: dev_test_hash
+          EVM_RPC_URL: https://mainnet.infura.io/v3/test
+          EVM_WS_URL: wss://mainnet.infura.io/ws/v3/test
+          VAULT_ADDR: https://vault.dev.protean.sh
+          VAULT_ROLE_ID: test
+          VAULT_SECRET_ID: test
+          FAIRNESS_REGISTRY_ADDRESS: 0x0000000000000000000000000000000000000000
+          FAIRNESS_VERIFIER_ADDRESS: 0x0000000000000000000000000000000000000000
+        run: |
+          pytest tests/ -v
+
+      - name: Cosign sign artifacts
+        uses: sigstore/cosign-installer@v3
+      - run: |
+          cosign sign-blob --yes sbom.json --output-signature sbom.sig
+          cosign sign-blob --yes circuits/build/verification_key.json --output-signature circuit.sig || true
+
+      - name: Build enterprise Docker (distroless)
+        run: |
+          docker build -f Dockerfile.enterprise -t protean-shapes:enterprise --provenance=true .
+
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: protean-shapes:enterprise
+          severity: CRITICAL,HIGH

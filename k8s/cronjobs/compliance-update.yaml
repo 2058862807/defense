@@ -1,0 +1,105 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: compliance-feed-update
+  namespace: protean-prod
+  labels:
+    app: compliance
+    tier: gov
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM UTC - OFAC/FATF update
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: compliance-update
+        spec:
+          serviceAccountName: protean-compliance
+          securityContext:
+            runAsUser: 1001
+            runAsNonRoot: true
+            fsGroup: 1001
+            seccompProfile:
+              type: RuntimeDefault
+          restartPolicy: OnFailure
+          containers:
+            - name: compliance-updater
+              image: protean-shapes:2.0.0-enterprise
+              imagePullPolicy: Always
+              command:
+                - python
+                - -m
+                - app.compliance.service
+                - --refresh-all
+              env:
+                - name: ENV
+                  value: production
+                - name: REDIS_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: redis-config
+                      key: REDIS_URL
+                - name: OFAC_FEED_URL
+                  value: "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV"
+                - name: FATF_FEED_URL
+                  value: "https://www.fatf-gafi.org/en/publications/High-risk-and-other-monitored-jurisdictions.html"
+                - name: VAULT_ADDR
+                  valueFrom:
+                    secretKeyRef:
+                      name: vault-config
+                      key: VAULT_ADDR
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: certs
+                  mountPath: /certs
+                  readOnly: true
+          volumes:
+            - name: certs
+              secret:
+                secretName: protean-mtls-certs
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: protean-compliance
+  namespace: protean-prod
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: protean-compliance
+  namespace: protean-prod
+rules:
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: protean-compliance
+  namespace: protean-prod
+subjects:
+  - kind: ServiceAccount
+    name: protean-compliance
+    namespace: protean-prod
+roleRef:
+  kind: Role
+  name: protean-compliance
+  apiGroup: rbac.authorization.k8s.io

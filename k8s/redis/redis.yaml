@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: protean-prod
+  labels:
+    app: redis
+    tier: infra
+spec:
+  replicas: 3  # HA with Sentinel or Cluster
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "--requirepass", "$(REDIS_PASS)", "--tls-port", "6380", "--port", "0", "--tls-cert-file", "/certs/tls.crt", "--tls-key-file", "/certs/tls.key", "--tls-ca-cert-file", "/certs/ca.crt"]
+          env:
+            - name: REDIS_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: redis-config
+                  key: REDIS_PASS
+          ports:
+            - containerPort: 6380
+              name: redis-tls
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "--tls", "--cert", "/certs/tls.crt", "--key", "/certs/tls.key", "--cacert", "/certs/ca.crt", "-a", "$(REDIS_PASS)", "ping"]
+            initialDelaySeconds: 10
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "--tls", "--cert", "/certs/tls.crt", "--key", "/certs/tls.key", "--cacert", "/certs/ca.crt", "-a", "$(REDIS_PASS)", "ping"]
+            initialDelaySeconds: 5
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: certs
+          secret:
+            secretName: protean-mtls-certs
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: protean-prod
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6380
+      targetPort: 6380
+  clusterIP: None  # Headless for Sentinel
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+  namespace: protean-prod
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: redis

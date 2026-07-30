@@ -1,0 +1,83 @@
+version: '3.8'
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      - ENV=production
+      - ZK_MODE=mock
+      - REDIS_URL=redis://redis:6379/0
+      - POSTGRES_URL=postgresql://protean:protean@postgres:5432/protean
+      - KAFKA_BROKERS=kafka:9092
+    depends_on:
+      - redis
+      - postgres
+      - kafka
+      - zk-prover
+    restart: unless-stopped
+
+  zk-prover:
+    image: protean/zk-prover:latest
+    build:
+      context: .
+      dockerfile: protean-shapes-prod/Dockerfile.zkprover
+    ports:
+      - "5000:5000"
+    environment:
+      - PROVER_MODE=production
+    restart: unless-stopped
+    # In production, this would be Rust gnark service
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASS:-protean_secure}
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: protean
+      POSTGRES_PASSWORD: ${POSTGRES_PASS:-protean_secure}
+      POSTGRES_DB: protean
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  kafka:
+    image: bitnami/kafka:3.7
+    environment:
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+    ports:
+      - "9092:9092"
+
+  offense-bot:
+    build: .
+    command: ["python", "-m", "app.bots.offense_bot", "--iterations", "1000"]
+    env_file: .env
+    environment:
+      - BOT_MODE=offense
+    depends_on:
+      - api
+      - kafka
+    restart: unless-stopped
+    # No internet egress except flashbots relay + private RPC - network policy
+
+  defense-bot:
+    build: .
+    command: ["python", "-m", "app.bots.defense_bot", "--iterations", "1000"]
+    env_file: .env
+    environment:
+      - BOT_MODE=defense
+    depends_on:
+      - api
+      - kafka
+    restart: unless-stopped
+
+volumes:
+  pgdata:

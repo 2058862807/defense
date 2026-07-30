@@ -1,0 +1,152 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: protean-prod
+  labels:
+    compliance: FIPS-140-3
+    tier: gov
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: protean-operator
+  namespace: protean-prod
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: protean-operator
+rules:
+  - apiGroups: ["protean.sh"]
+    resources: ["proteanbots", "proteanbots/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "configmaps", "secrets", "services"]
+    verbs: ["get", "list", "watch", "create", "update"]
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors"]
+    verbs: ["get", "list", "create"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: protean-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: protean-operator
+subjects:
+  - kind: ServiceAccount
+    name: protean-operator
+    namespace: protean-prod
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: protean-operator
+  namespace: protean-prod
+  labels:
+    app: protean-operator
+    compliance: FIPS-140-3
+spec:
+  replicas: 2  # HA
+  selector:
+    matchLabels:
+      app: protean-operator
+  template:
+    metadata:
+      labels:
+        app: protean-operator
+    spec:
+      serviceAccountName: protean-operator
+      securityContext:
+        runAsUser: 1001
+        runAsNonRoot: true
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: operator
+          image: protean-shapes-operator:2.0.0-enterprise
+          imagePullPolicy: Always
+          command: ["kopf", "run", "--all-namespaces", "k8s/operator/operator.py"]
+          env:
+            - name: ENV
+              value: production
+            - name: VAULT_ADDR
+              valueFrom:
+                secretKeyRef:
+                  name: vault-config
+                  key: VAULT_ADDR
+            - name: VAULT_ROLE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: vault-config
+                  key: ROLE_ID
+            - name: ZK_CIRCUIT_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: circuit-config
+                  key: CIRCUIT_HASH
+          ports:
+            - containerPort: 8080
+              name: metrics
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: certs
+          secret:
+            secretName: protean-mtls-certs
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: circuit-config
+  namespace: protean-prod
+data:
+  CIRCUIT_HASH: "REPLACE_WITH_REAL_COMBINED_HASH_FROM_CEREMONY_TRANSCRIPT"
+  POLICY_VERSION: "1.2.0"
+  MODEL_HASH: "REPLACE_WITH_REAL_MODEL_HASH"
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: protean-operator-pdb
+  namespace: protean-prod
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: protean-operator
