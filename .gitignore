@@ -1,0 +1,53 @@
+# Build artifacts too big for git - see circuits/ceremony/
+build/
+dist/
+out/
+circuits/build/
+circuits/*/build/
+**/build/
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.env
+*.log
+*.tmp
+tmp/
+temp/
+# Large PTau files
+*.ptau
+*.ptau.*
+# Keep final artifacts via LFS or separate storage
+# circuits/build/*.wasm
+# circuits/build/*.zkey
+# But final small verifier is okay
+!contracts/verifiers/*.sol
+!circuits/build/verification_key.json
+!circuits/build/circuit.hash
+!circuits/build/combined.hash
+
+# Models - large
+models/*.joblib
+models/*.npy
+*.parquet
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+licenses/*.pem
+licenses/*.json
+certs/
+secrets/
+
+# Load test results
+load_test_results.json
+load_test_results_k6.json
+tests/e2e/results.json
+
+# Coverage
+coverage/
+.nyc_output/

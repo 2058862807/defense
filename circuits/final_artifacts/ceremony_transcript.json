@@ -1,0 +1,25 @@
+{
+  "ceremony": "Protean Shapes Real Powers of Tau - Government Standard",
+  "powers": 14,
+  "participants": [
+    {"name": "Protean-Gov-P1", "role": "Protean Gov", "entropy_source": "/dev/urandom base64", "contribution": "pot14_0000->0001", "hash": "6356737835fcc2e1da4fac54d84be698e3da7ab64db6014c086b4f600d23b8f4"},
+    {"name": "Enterprise-Auditor-P2", "role": "Enterprise Auditor", "entropy_source": "OpenSSL rand", "contribution": "pot14_0001->0002", "hash": "47dc240edd61cac26a083b9c300b69d9ea0b7c6897744be9b799435fbb551336"},
+    {"name": "External-Verifier-P3", "role": "External Verifier", "entropy_source": "uuid+timestamp", "contribution": "pot14_0002->0003", "hash": "3c3ac4e18584612921d4ad5f3e2b6c19fd50f6186f0738fdb295d55c4f6b2491"}
+  ],
+  "circuit_contributors": [
+    {"name": "Protean-Circuit-P1", "contribution": "0000->0001", "hash": "5b9837fa709badf8983d4b60a7aaeeb077febc2153e1f08efcadb776151c2d67"},
+    {"name": "Enterprise-Circuit-P2", "contribution": "0001->0002", "hash": "c0c9f8f66bdd6ea41e578500535e718b23c4459287d2e3a2513effc4b6ae195d"}
+  ],
+  "beacon": "Real beacon from openssl rand -hex 32",
+  "final_ptau": "pot14_final.ptau 13M",
+  "final_zkey": "fairness_policy_final.zkey 198K",
+  "verification_key": "verification_key.json",
+  "solidity_verifier": "FairnessPolicyVerifier.sol",
+  "combined_hash": "db9cf5c741a4fa79514699a37a309ce0350e35a4f0491a742e31591b3018ef7a",
+  "date": "2026-07-30T16:34:37Z",
+  "compliance": "NIST SP 800-53, FIPS 140-3, SLSA L3",
+  "real_proof_generated": true,
+  "proof_verification": "OK",
+  "circuit_constraints": 327,
+  "wires": 333
+}
