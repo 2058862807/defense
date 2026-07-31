@@ -438,8 +438,8 @@ function NeuralView({ data }) {
             <strong>No real SHAP values yet:</strong> Neural network shows 0.000 because no real transactions from mempool. To get real data:<br/>
             1. Start Python backend: <code>uvicorn app.main:app --port 8080</code> with real model at models/xgboost_protean_v2.joblib<br/>
             2. Configure EVM_WS_URL with Alchemy/Infura API key from Vault for real mempool<br/>
-            3. Or trigger real analysis: <code>curl -X POST http://localhost:8080/analyze -H "Authorization: Bearer $JWT" -d '{'{'"type":"swap","value_eth":0.5,"gas_price_gwei":50,"slippage_bps":100,"pool_liquidity_eth":1000,"is_protected_user":1}'}'</code><br/>
-            4. Real flow: mempool -> scoring xgboost_protean_v2 -> SHAP TreeExplainer -> ZK proof WASM+ZKEY -> verification<br/>
+            3. Or trigger real analysis: <code>{"curl -X POST http://localhost:8080/analyze -H \"Authorization: Bearer $JWT\" -d '{\"type\":\"swap\",\"value_eth\":0.5,\"gas_price_gwei\":50,\"slippage_bps\":100,\"pool_liquidity_eth\":1000,\"is_protected_user\":1}'"}</code><br/>
+            4. Real flow: mempool -&gt; scoring xgboost_protean_v2 -&gt; SHAP TreeExplainer -&gt; ZK proof WASM+ZKEY -&gt; verification<br/>
             Current mode: {data?.transactions?.length > 0 ? `${data.transactions.length} transactions in buffer, but shapValues empty - check backend /analyze endpoint` : "No transactions - backend not connected or mempool empty"}
           </div>
         )}

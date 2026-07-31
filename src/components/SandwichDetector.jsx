@@ -193,7 +193,7 @@ export default function SandwichDetector({ data }) {
                   🚫 BLOCKED PER FAIRNESS POLICY v1.2.0 - 3 Levels
                 </div>
                 <div style={{ fontSize: '10px', color: '#fecaca', lineHeight: '1.5' }}>
-                  <div>1. Python pre-check: <code>score_opportunity()</code> is_fair=False because allow_sandwich=false + slippage {detectionResult.opportunity.victim_swap?.slippage_bps} > max 50 bps</div>
+                  <div>1. Python pre-check: <code>score_opportunity()</code> is_fair=False because allow_sandwich=false + slippage {detectionResult.opportunity.victim_swap?.slippage_bps} &gt; max 50 bps</div>
                   <div>2. ZK Circuit: <code>isFair = slippageOk AND NOT sandwichBlocked AND NOT smallSandwichBlocked</code> → isFair=0 for sandwich, proof would have publicInputs[0]=0</div>
                   <div>3. FairnessRegistry.sol: <code>require(isFairFromProof)</code> where isFairFromProof=publicInputs[0]==1 derived from verified proof, not caller bool. Dishonest bot cannot claim true if proof says 0.</div>
                   <div style={{ marginTop: '6px', fontStyle: 'italic' }}>{detectionResult.opportunity.fairness_note}</div>
