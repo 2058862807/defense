@@ -356,10 +356,27 @@ class OffenseBotEnterprise(BaseProteanBotEnterprise):
         """
         Enterprise: builds real signed transactions for arb via TxBuilderEnterprise
         Uses Vault HSM signer, real ABIs, EIP-1559, no placeholder
+        Now supports flash loan arbitrage for capital efficiency - no own capital needed
+
+        - If opportunity profit is large and we want zero capital at risk, use flash loan
+        - Otherwise use regular arbitrage with own capital
         """
         from app.bots.builders.tx_builder import TxBuilderEnterprise
         builder = TxBuilderEnterprise(evm_client=self.evm)
         try:
+            # Try flash loan arbitrage first for capital efficiency (no own capital needed)
+            # Flash loan arbitrage is fair per policy: allow_arbitrage=true, it's DEX price deviation, not sandwich
+            # Uses Aave V3 flashLoanSimple: borrow, swap on pool A, swap on pool B, repay + premium 0.05%, keep profit
+            if opp.get("profit_eth", 0) > 0.1:  # Use flash loan for larger profits to save capital
+                logger.info(f"Trying flash loan arbitrage for profit {opp.get('profit_eth')} ETH - no own capital needed")
+                try:
+                    bundle = builder.build_flashloan_arbitrage_bundle(opp)
+                    logger.info(f"Flash loan arbitrage bundle built: {len(bundle)} txs - profit {opp.get('profit_eth')} ETH via Aave flash loan")
+                    return bundle
+                except Exception as flash_e:
+                    logger.warning(f"Flash loan arbitrage failed, falling back to regular: {flash_e}")
+
+            # Regular arbitrage with own capital
             bundle = builder.build_arbitrage_bundle(opp)
             return bundle
         except Exception as e:
