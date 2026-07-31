@@ -1,0 +1,171 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=JetBrains+Mono:wght@300;400;500;600&family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg-deep: #050a12;
+  --bg-panel: rgba(10, 20, 35, 0.85);
+  --bg-card: rgba(10, 22, 40, 0.75);
+  --bg-card-hover: rgba(15, 30, 55, 0.85);
+  --border-glow: rgba(0, 240, 255, 0.2);
+  --border-glow-strong: rgba(0, 240, 255, 0.5);
+  --neon-cyan: #00f0ff;
+  --neon-cyan-dim: rgba(0, 240, 255, 0.3);
+  --neon-gold: #f0b34b;
+  --neon-gold-dim: rgba(240, 179, 75, 0.3);
+  --neon-green: #00ff88;
+  --neon-green-dim: rgba(0, 255, 136, 0.3);
+  --neon-red: #ff0044;
+  --neon-red-dim: rgba(255, 0, 68, 0.3);
+  --neon-purple: #b44bff;
+  --neon-purple-dim: rgba(180, 75, 255, 0.3);
+  --text-primary: #e0f0ff;
+  --text-secondary: #88aacc;
+  --text-muted: #4a6a8a;
+  --amber: #f0b34b;
+  --green: #00ff88;
+  --red: #ff0044;
+  --blue: #00aaff;
+  --font-display: 'Orbitron', monospace;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-body: 'Inter', sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Subtle static grid overlay — no animated repaints (Firefox perf fix) */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-image:
+    linear-gradient(rgba(0, 240, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.025) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+  /* Static — animation removed for Firefox GPU perf */
+}
+
+/* Glow effects */
+.glow-cyan {
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.2), 0 0 20px rgba(0, 240, 255, 0.1);
+  border-color: rgba(0, 240, 255, 0.3);
+}
+.glow-gold {
+  box-shadow: 0 0 10px rgba(240, 179, 75, 0.2), 0 0 20px rgba(240, 179, 75, 0.1);
+  border-color: rgba(240, 179, 75, 0.3);
+}
+.glow-red {
+  box-shadow: 0 0 10px rgba(255, 0, 68, 0.2), 0 0 20px rgba(255, 0, 68, 0.1);
+  border-color: rgba(255, 0, 68, 0.3);
+}
+.glow-green {
+  box-shadow: 0 0 10px rgba(0, 255, 136, 0.2), 0 0 20px rgba(0, 255, 136, 0.1);
+  border-color: rgba(0, 255, 136, 0.3);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: rgba(0, 10, 30, 0.5); }
+::-webkit-scrollbar-thumb { background: var(--neon-cyan); border-radius: 2px; }
+/* Firefox scrollbar */
+* { scrollbar-width: thin; scrollbar-color: var(--neon-cyan) rgba(0, 10, 30, 0.5); }
+
+/* Animations */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulseGlow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes neonPulse {
+  0%, 100% { text-shadow: 0 0 7px var(--neon-cyan), 0 0 15px rgba(0, 240, 255, 0.3); }
+  50% { text-shadow: 0 0 14px var(--neon-cyan), 0 0 30px rgba(0, 240, 255, 0.5); }
+}
+@keyframes scanlineMove {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes demoStudioGlow {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(236, 72, 153, 0.7), 0 0 22px rgba(0, 240, 255, 0.5);
+    border-color: rgba(236, 72, 153, 0.9);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(236, 72, 153, 1), 0 0 38px rgba(0, 240, 255, 0.85);
+    border-color: #00f0ff;
+  }
+}
+
+.demo-studio-tab-btn {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.85) 0%, rgba(236, 72, 153, 0.85) 50%, rgba(0, 240, 255, 0.85) 100%) !important;
+  color: #ffffff !important;
+  font-weight: 800 !important;
+  border: 1.5px solid #00f0ff !important;
+  animation: demoStudioGlow 2.5s infinite ease-in-out;
+  letter-spacing: 0.5px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  position: relative;
+  padding: 6px 16px !important;
+  font-size: 11.5px !important;
+  border-radius: 20px !important;
+}
+
+.demo-studio-tab-btn:hover {
+  transform: scale(1.08);
+  box-shadow: 0 0 28px rgba(236, 72, 153, 1), 0 0 45px rgba(0, 240, 255, 0.9) !important;
+}
+
+.demo-studio-tab-btn.active {
+  background: linear-gradient(135deg, #a855f7 0%, #ec4899 50%, #00f0ff 100%) !important;
+  box-shadow: 0 0 25px rgba(0, 240, 255, 0.9), 0 0 45px rgba(236, 72, 153, 0.9) !important;
+  border: 2px solid #ffffff !important;
+}
+
+.demo-studio-sidebar-btn {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.4) 0%, rgba(236, 72, 153, 0.4) 100%) !important;
+  border: 1px solid #ec4899 !important;
+  color: #ffffff !important;
+  animation: demoStudioGlow 2.5s infinite ease-in-out;
+  position: relative;
+}
+
