@@ -17,7 +17,6 @@ import BiometricsSuite from './components/BiometricsSuite';
 import FederatedLearning from './components/FederatedLearning';
 import GnnFraudRings from './components/GnnFraudRings';
 import QrngEntropy from './components/QrngEntropy';
-import ToolDemoStudio from './components/ToolDemoStudio';
 import WebMasterAgentPanel from './components/WebMasterAgentPanel';
 import ZkXaiCouplingView from './components/ZkXaiCouplingView';
 import SandwichDetector from './components/SandwichDetector';
@@ -26,7 +25,6 @@ const NAV_ITEMS = [
   { id: 'dashboard', label: 'DASHBOARD', icon: '◈' },
   { id: 'zkxai', label: 'ZK XAI COUPLING', icon: '🔑' },
   { id: 'sandwich', label: 'SANDWICH DETECT', icon: '🥪' },
-  { id: 'demostudio', label: 'DEMO STUDIO', icon: '🧪' },
   { id: 'biometrics', label: 'BIOMETRICS', icon: '🧬' },
   { id: 'federated', label: 'FEDERATED', icon: '⚡' },
   { id: 'gnn', label: 'GNN RINGS', icon: '🕸' },
@@ -568,7 +566,6 @@ export default function App() {
       case 'dashboard': return <ProteanDefaultView {...viewProps} />;
       case 'zkxai': return <ZkXaiCouplingView {...viewProps} />;
       case 'sandwich': return <SandwichView {...viewProps} />;
-      case 'demostudio': return <ToolDemoStudio />;
       case 'biometrics': return <BiometricsSuite />;
       case 'federated': return <FederatedLearning />;
       case 'gnn': return <GnnFraudRings />;
@@ -595,10 +592,9 @@ export default function App() {
         {NAV_ITEMS.map(item => (
           <div
             key={item.id}
-            className={item.id === 'demostudio' ? `demo-studio-sidebar-btn ${activeView === 'demostudio' ? 'active' : ''}` : ''}
             style={styles.navItem(activeView === item.id)}
             onClick={() => setActiveView(item.id)}
-            title={`${item.label}${item.id === 'demostudio' ? ' (INTERACTIVE DEMO STUDIO)' : ''}`}
+            title={item.label}
           >
             {item.icon}
           </div>
@@ -613,67 +609,21 @@ export default function App() {
             <div style={styles.headerTitle} onClick={() => setActiveView('dashboard')}>
               PROTEAN DEFENSE
             </div>
-
-            {/* Standout Featured Demo Studio Button */}
-            <button
-              onClick={() => setActiveView('demostudio')}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 14px',
-                borderRadius: '20px',
-                border: activeView === 'demostudio' ? '2px solid #ffffff' : '1.5px solid #00f0ff',
-                background: activeView === 'demostudio'
-                  ? 'linear-gradient(135deg, #a855f7 0%, #ec4899 50%, #00f0ff 100%)'
-                  : 'linear-gradient(135deg, rgba(168, 85, 247, 0.9) 0%, rgba(236, 72, 153, 0.9) 50%, rgba(0, 240, 255, 0.9) 100%)',
-                color: '#ffffff',
-                fontWeight: 800,
-                fontSize: '11px',
-                fontFamily: 'var(--font-mono, monospace)',
-                cursor: 'pointer',
-                boxShadow: activeView === 'demostudio'
-                  ? '0 0 25px rgba(0, 240, 255, 0.9), 0 0 40px rgba(236, 72, 153, 0.9)'
-                  : '0 0 16px rgba(0, 240, 255, 0.6), 0 0 28px rgba(168, 85, 247, 0.5)',
-                animation: 'demoStudioGlow 2.5s infinite ease-in-out',
-                whiteSpace: 'nowrap',
-                letterSpacing: '0.5px',
-              }}
-            >
-              <span style={{ fontSize: '14px' }}>🧪</span>
-              <span>DEMO STUDIO</span>
-              <span style={{
-                background: '#00f0ff',
-                color: '#05101a',
-                fontSize: '9px',
-                fontWeight: 900,
-                padding: '1px 5px',
-                borderRadius: '6px',
-                letterSpacing: '0.5px',
-                boxShadow: '0 0 6px #00f0ff',
-              }}>
-                INTERACTIVE
-              </span>
-            </button>
           </div>
 
           {/* Top Middle Tab Navigation */}
           <div style={styles.topNavContainer}>
-            {NAV_ITEMS.map((item) => {
-              const isDemo = item.id === 'demostudio';
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveView(item.id)}
-                  className={isDemo ? `demo-studio-tab-btn ${activeView === 'demostudio' ? 'active' : ''}` : ''}
-                  style={isDemo ? undefined : styles.topNavBtn(activeView === item.id, false)}
-                  title={item.label}
-                >
-                  <span>{item.icon}</span>
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
+            {NAV_ITEMS.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setActiveView(item.id)}
+                style={styles.topNavBtn(activeView === item.id, false)}
+                title={item.label}
+              >
+                <span>{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
