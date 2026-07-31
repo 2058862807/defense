@@ -1,4 +1,4 @@
-# PROTEAN SHAPES — Prototype → Production Ready — HONEST COMPLIANCE NOTICE
+# PROTEAN DEFENSE — Prototype → Production Ready — HONEST COMPLIANCE NOTICE
 
 > **HONEST COMPLIANCE NOTICE (per critical review):**
 > - This codebase **uses FIPS-approved algorithms** (AES-256-GCM, SHA256, ML-KEM-768 FIPS 203, ECDSA P-256 FIPS 186-4) via libraries that can be FIPS-validated (OpenSSL FIPS Provider, liboqs) - **module not CMVP validated, no certificate #**. A Python script checking algorithm choice cannot make module "FIPS 140-3 compliant" - algorithm choice and formal module validation are different things. Would require NIST CMVP lab testing, multi-month, paid, resulting in cert number.
@@ -123,7 +123,7 @@ bash start.sh both  # Now real liboqs build, real model training from curated hi
 
 - **Location:** `frontend/` + `src/` at root (restored from b5afc10 initial commit, lost during enterprise rebase, now restored)
 - **Stack:** React 19.2.7, Three.js 0.185.1, @react-three/fiber, drei, d3, recharts, Vite 8.1.1
-- **Components:** 20+ holographic: BiometricsSuite, CyberTerminal, FederatedLearning, Globe3D, GnnFraudRings, HolographicGauges, HolographicTransactionCard, LiveMempoolTable (real mempool), NeuralNetwork, ProofBlockchain, ProteanDefaultView (40K), QknVisualization, QrngEntropy, RiskGauge, ShapPanel, SpecSimulation, SsafWave, ToolDemoStudio, WebMasterAgentPanel, ZkXaiCouplingView, hooks/useLiveData
+- **Components:** 20+ holographic: BiometricsSuite, CyberTerminal, FederatedLearning, Globe3D, GnnFraudRings, HolographicGauges, HolographicTransactionCard, LiveMempoolTable (real mempool), NeuralNetwork, ProofBlockchain, ProteanDefaultView (40K), QknVisualization, QrngEntropy, RiskGauge, ShapPanel, SpecSimulation, CompositeRiskFusionWave, ToolDemoStudio, WebMasterAgentPanel, ZkXaiCouplingView, hooks/useLiveData
 - **Start:** `npm install && npm run dev` -> `tsx server.ts` Express + Vite dev server + WebSocket + GoogleGenAI Live on port 3000, or `vite` dev, or production `npm run build && npm run start` -> `node dist/server.cjs`
 
 ## Verification 10/10 - Honest Meaning
