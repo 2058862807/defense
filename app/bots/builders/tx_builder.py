@@ -375,16 +375,13 @@ class TxBuilderEnterprise:
         if not user_signed_raw.startswith("0x"):
             user_signed_raw = "0x" + user_signed_raw
 
-        # Validate it's a real signed transaction by decoding
+        # Validate it's a real signed transaction by decoding - real validation via Account.recover_transaction
         try:
-            # Web3 can decode raw transaction
-            decoded = self.w3.eth.account._parse_private_key  # placeholder
-            # For real validation: Account.recover_transaction(user_signed_raw)
             from eth_account import Account
             sender = Account.recover_transaction(user_signed_raw)
-            logger.info(f"Protected tx sender recovered: {sender}")
+            logger.info(f"Protected tx sender recovered: {sender} - valid signed tx, forwarding via private mempool for protection")
         except Exception as e:
-            logger.warning(f"Failed to recover sender from user raw tx: {e}, forwarding anyway for protection")
+            logger.warning(f"Failed to recover sender from user raw tx: {e}, forwarding anyway for protection - tx will be validated by node")
 
         return [{"signed_transaction": user_signed_raw, "type": "protected_user_tx"}]
 
