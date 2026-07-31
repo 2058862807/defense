@@ -111,6 +111,62 @@ async def _ensure_shared_mempool():
 
         connector = MempoolConnectorEnterprise()
 
+        # ZK proofs are slow (snarkjs subprocess, seconds). Score+SHAP+compliance
+        # are fast (~ms). To keep the mempool stream responsive we broadcast the
+        # fast verdict immediately and generate the Groth16 proof in the
+        # background (capped) so the event loop is never blocked by proving.
+        _MAX_PENDING_PROOFS = 8
+        _pending_proofs = 0
+        _zk_proof_sem = asyncio.Semaphore(2)
+
+        def _shap_dict(explanation):
+            feature_names = explanation.get("feature_names", [])
+            shap_vals = explanation.get("shap_values", [])
+            if isinstance(shap_vals, list) and feature_names:
+                if shap_vals and isinstance(shap_vals[0], list):
+                    shap_vals = shap_vals[0]
+                return {name: shap_vals[i] for i, name in enumerate(feature_names) if i < len(shap_vals)}
+            return shap_vals if isinstance(shap_vals, dict) else {}
+
+        async def _broadcast(real_tx):
+            for conn in manager.active_connections:
+                try:
+                    await conn.send_json({"type": "tx", "tx": real_tx, "transaction": real_tx})
+                except Exception:
+                    pass
+            for conn in dashboard_manager.active_connections:
+                try:
+                    await conn.send_json({
+                        "type": "dashboard_update",
+                        "transactions": [real_tx],
+                        "metrics": {
+                            "aggregate_throughput_tx_s": 1,
+                            "total_scored": 1,
+                            "ml_confidence": 96.5,
+                            "proof_latest_ms": 0,
+                            "proof_count": 0
+                        }
+                    })
+                except Exception:
+                    pass
+
+        async def _prove_and_update(tx, real_tx):
+            nonlocal _pending_proofs
+            if _pending_proofs >= _MAX_PENDING_PROOFS:
+                return
+            _pending_proofs += 1
+            try:
+                async with _zk_proof_sem:
+                    zk_package = await asyncio.to_thread(xai_coupler.generate_zk_proof, tx)
+                real_tx["proof_status"] = zk_package.get("zk_status", "PROVED_REAL_GROTH16")
+                real_tx["proof"] = zk_package.get("zk_proof")
+                real_tx["zk_public_inputs"] = zk_package.get("zk_public_inputs", [])
+                await _broadcast(real_tx)
+            except Exception as e:
+                logger.error(f"Background ZK proof failed for {tx.get('hash', '')}: {e}")
+            finally:
+                _pending_proofs -= 1
+
         async def on_shared_tx(tx):
             try:
                 def _process():
@@ -120,21 +176,8 @@ async def _ensure_shared_mempool():
                         name=None,
                         country=tx.get("country") or "United States"
                     )
-                    zk_package = xai_coupler.generate_zk_proof(tx)
-
-                    feature_names = zk_package.get("explanation", {}).get("feature_names", [])
-                    shap_vals = zk_package.get("explanation", {}).get("shap_values", [])
-                    if isinstance(shap_vals, list) and feature_names:
-                        if shap_vals and isinstance(shap_vals[0], list):
-                            shap_vals = shap_vals[0]
-                        shap_dict = {}
-                        for i, name in enumerate(feature_names):
-                            if i < len(shap_vals):
-                                shap_dict[name] = shap_vals[i]
-                    elif isinstance(shap_vals, dict):
-                        shap_dict = shap_vals
-                    else:
-                        shap_dict = {}
+                    explanation = xai_coupler.explain(tx)
+                    commitments = xai_coupler.create_commitments(tx, score, explanation)
 
                     return {
                         "hash": tx.get("hash"),
@@ -142,43 +185,24 @@ async def _ensure_shared_mempool():
                         "risk_score": score * 100,
                         "score": score,
                         "decision": "block" if score > 0.7 else "step" if score > 0.45 else "pass",
-                        "shap_values": shap_dict,
-                        "shapVals": shap_dict,
+                        "shap_values": _shap_dict(explanation),
+                        "shapVals": _shap_dict(explanation),
                         "source": "real_mempool",
                         "ledger": (tx.get("to_chain") or "ETH").upper(),
                         "amount_btc": tx.get("value_eth", 0),
                         "fee_rate": tx.get("gas_price_gwei", 0),
                         "timestamp": tx.get("timestamp") or __import__("datetime").datetime.utcnow().isoformat(),
-                        "proof_status": zk_package.get("zk_status", "PROVED_REAL_GROTH16"),
-                        "proof": zk_package.get("zk_proof"),
+                        "proof_status": "PROOF_PENDING",
+                        "proof": None,
                         "compliance": compliance,
-                        "explanation": zk_package.get("explanation"),
-                        "commitments": zk_package.get("commitments")
+                        "explanation": explanation,
+                        "commitments": commitments
                     }
 
                 real_tx = await asyncio.to_thread(_process)
 
-                for conn in manager.active_connections:
-                    try:
-                        await conn.send_json({"type": "tx", "tx": real_tx, "transaction": real_tx})
-                    except Exception:
-                        pass
-
-                for conn in dashboard_manager.active_connections:
-                    try:
-                        await conn.send_json({
-                            "type": "dashboard_update",
-                            "transactions": [real_tx],
-                            "metrics": {
-                                "aggregate_throughput_tx_s": 1,
-                                "total_scored": 1,
-                                "ml_confidence": 96.5,
-                                "proof_latest_ms": 0,
-                                "proof_count": 0
-                            }
-                        })
-                    except Exception:
-                        pass
+                await _broadcast(real_tx)
+                asyncio.create_task(_prove_and_update(tx, real_tx))
 
                 attempt = intel_detector.analyze_pending_tx(tx)
                 if attempt:
