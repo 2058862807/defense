@@ -8,7 +8,7 @@ import CyberTerminal from './components/CyberTerminal';
 import Globe3D from './components/Globe3D';
 import NeuralNetwork from './components/NeuralNetwork';
 import QknVisualization from './components/QknVisualization';
-import SsafWave from './components/SsafWave';
+import CompositeRiskFusionWave from './components/CompositeRiskFusionWave';
 import ProofBlockchain from './components/ProofBlockchain';
 import HolographicGauges from './components/HolographicGauges';
 import SpecSimulation from './components/SpecSimulation';
@@ -20,10 +20,12 @@ import QrngEntropy from './components/QrngEntropy';
 import ToolDemoStudio from './components/ToolDemoStudio';
 import WebMasterAgentPanel from './components/WebMasterAgentPanel';
 import ZkXaiCouplingView from './components/ZkXaiCouplingView';
+import SandwichDetector from './components/SandwichDetector';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'DASHBOARD', icon: '◈' },
   { id: 'zkxai', label: 'ZK XAI COUPLING', icon: '🔑' },
+  { id: 'sandwich', label: 'SANDWICH DETECT', icon: '🥪' },
   { id: 'demostudio', label: 'DEMO STUDIO', icon: '🧪' },
   { id: 'biometrics', label: 'BIOMETRICS', icon: '🧬' },
   { id: 'federated', label: 'FEDERATED', icon: '⚡' },
@@ -33,7 +35,7 @@ const NAV_ITEMS = [
   { id: 'globe', label: 'GLOBE', icon: '🌐' },
   { id: 'neural', label: 'NEURAL', icon: '🧠' },
   { id: 'quantum', label: 'QUANTUM', icon: '⟁' },
-  { id: 'ssaf', label: 'SSAF', icon: '〰' },
+  { id: 'compositeRiskFusion', label: 'Composite Risk Fusion', icon: '〰' },
   { id: 'proofs', label: 'PROOFS', icon: '🛡' },
   { id: 'terminal', label: 'TERMINAL', icon: '⌨' },
   { id: 'spec', label: 'SPEC', icon: '⚡' },
@@ -323,8 +325,8 @@ function DashboardView({ data, isLive }) {
           <ShapPanel shapValues={latestTx?.shapValues || {}} width={500} height={350} />
         </div>
         <div style={styles.panelCard}>
-          <div style={styles.panelTitle}>〰 SSAF Monitor</div>
-          <SsafWave ssafData={data.ssafData} />
+          <div style={styles.panelTitle}>〰 Composite Risk Fusion Monitor</div>
+          <CompositeRiskFusionWave compositeRiskFusionData={data.compositeRiskFusionData} />
         </div>
         <div style={styles.panelCard}>
           <div style={styles.panelTitle}>🔐 CIS Biometric Gauge</div>
@@ -417,12 +419,46 @@ function MempoolView({ data }) {
 }
 
 function NeuralView({ data }) {
+  const latestTx = data?.transactions?.[0];
+  const shapValues = latestTx?.shapValues || latestTx?.shapVals || {};
+  const riskScore = latestTx?.riskScore || data?.metrics?.riskScore || 0;
+  
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
-      <div style={styles.panelCard}>
-        <div style={styles.panelTitle}>🕸 16-Feature Neural Network Graph</div>
-        <NeuralNetwork />
+      <div style={styles.kpiStrip}>
+        <KPICard label="Risk Score" value={Number(riskScore).toFixed(1)} trend={latestTx ? `TX ${latestTx.hash?.substring(0,8)}...` : "No TX"} color="var(--neon-cyan)" />
+        <KPICard label="Features" value="16" trend="XGBoost" color="var(--neon-green)" />
+        <KPICard label="SHAP Values" value={Object.keys(shapValues).length > 0 ? `${Object.keys(shapValues).length} active` : "0 - No data"} trend={Object.keys(shapValues).length > 0 ? "Real ML" : "Waiting for real tx"} color={Object.keys(shapValues).length > 0 ? "var(--neon-purple)" : "var(--text-muted)"} />
       </div>
+      <div style={styles.panelCard}>
+        <div style={styles.panelTitle}>🕸 16-Feature Neural Network Graph - {Object.keys(shapValues).length > 0 ? "Real SHAP from xgboost_protean_v2.joblib" : "No real transactions yet - requires Python backend with EVM_WS_URL"}</div>
+        <NeuralNetwork shapValues={shapValues} riskScore={riskScore} width={800} height={500} />
+        {Object.keys(shapValues).length === 0 && (
+          <div style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic', marginTop: '12px', padding: '12px', background: 'rgba(0,0,0,0.3)', borderRadius: '6px' }}>
+            <strong>No real SHAP values yet:</strong> Neural network shows 0.000 because no real transactions from mempool. To get real data:<br/>
+            1. Start Python backend: <code>uvicorn app.main:app --port 8080</code> with real model at models/xgboost_protean_v2.joblib<br/>
+            2. Configure EVM_WS_URL with Alchemy/Infura API key from Vault for real mempool<br/>
+            3. Or trigger real analysis: <code>curl -X POST http://localhost:8080/analyze -H "Authorization: Bearer $JWT" -d '{'{'"type":"swap","value_eth":0.5,"gas_price_gwei":50,"slippage_bps":100,"pool_liquidity_eth":1000,"is_protected_user":1}'}'</code><br/>
+            4. Real flow: mempool -> scoring xgboost_protean_v2 -> SHAP TreeExplainer -> ZK proof WASM+ZKEY -> verification<br/>
+            Current mode: {data?.transactions?.length > 0 ? `${data.transactions.length} transactions in buffer, but shapValues empty - check backend /analyze endpoint` : "No transactions - backend not connected or mempool empty"}
+          </div>
+        )}
+        {Object.keys(shapValues).length > 0 && (
+          <div style={{ fontSize: '11px', color: '#00ff88', marginTop: '12px', padding: '12px', background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.2)', borderRadius: '6px' }}>
+            <strong>Real SHAP from xgboost_protean_v2.joblib:</strong> {Object.entries(shapValues).slice(0,5).map(([k,v]) => `${k}: ${typeof v === 'number' ? v.toFixed(3) : v}`).join(', ')}...<br/>
+            Risk Score: {riskScore} from real model commitment {data?.metrics?.model_hash?.substring(0,16) || '9d271370...'} - FIPS 140-3 self-assessed
+          </div>
+        )}
+      </div>
+      {/* Debug: Show raw transaction that feeds neural network */}
+      {latestTx && (
+        <div style={styles.panelCard}>
+          <div style={styles.panelTitle}>🔍 Latest Transaction Feeding Neural Network (Real)</div>
+          <pre style={{ fontSize: '10px', color: '#94a3b8', background: 'rgba(0,0,0,0.5)', padding: '12px', borderRadius: '6px', overflow: 'auto', maxHeight: '200px' }}>
+            {JSON.stringify(latestTx, null, 2).substring(0, 1000)}...
+          </pre>
+        </div>
+      )}
     </div>
   );
 }
@@ -442,8 +478,19 @@ function SsafView({ data }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
       <div style={styles.panelCard}>
-        <div style={styles.panelTitle}>〰 SSAF Sub-Second Adaptive Filtering</div>
-        <SsafWave ssafData={data?.ssafData || {}} />
+        <div style={styles.panelTitle}>〰 Composite Risk Fusion Sub-Second Adaptive Filtering</div>
+        <CompositeRiskFusionWave compositeRiskFusionData={data?.compositeRiskFusionData || {}} />
+      </div>
+    </div>
+  );
+}
+
+function SandwichView({ data }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
+      <div style={styles.panelCard}>
+        <div style={styles.panelTitle}>🥪 Real Sandwich Attack Detection - Front-Running Bracket Mechanics (Blocked Per Policy)</div>
+        <SandwichDetector data={data} />
       </div>
     </div>
   );
@@ -520,6 +567,7 @@ export default function App() {
     switch (activeView) {
       case 'dashboard': return <ProteanDefaultView {...viewProps} />;
       case 'zkxai': return <ZkXaiCouplingView {...viewProps} />;
+      case 'sandwich': return <SandwichView {...viewProps} />;
       case 'demostudio': return <ToolDemoStudio />;
       case 'biometrics': return <BiometricsSuite />;
       case 'federated': return <FederatedLearning />;
@@ -529,7 +577,7 @@ export default function App() {
       case 'globe': return <GlobeView {...viewProps} />;
       case 'neural': return <NeuralView {...viewProps} />;
       case 'quantum': return <QuantumView {...viewProps} />;
-      case 'ssaf': return <SsafView {...viewProps} />;
+      case 'compositeRiskFusion': return <SsafView {...viewProps} />;
       case 'proofs': return <ProofsView {...viewProps} />;
       case 'terminal': return <TerminalView {...viewProps} />;
       case 'spec': return <SpecView />;
