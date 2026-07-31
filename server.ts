@@ -56,7 +56,7 @@ async function proxyToRealBackend(req: express.Request, res: express.Response, t
     const headers = new Headers();
     Object.entries(req.headers).forEach(([key, value]) => {
       const lowerKey = key.toLowerCase();
-      const forbiddenHeaders = ["host", "connection", "keep-alive", "transfer-encoding", "upgrade"];
+      const forbiddenHeaders = ["host", "connection", "keep-alive", "transfer-encoding", "upgrade", "content-length"];
       if (!forbiddenHeaders.includes(lowerKey) && value !== undefined) {
         if (Array.isArray(value)) {
           value.forEach(v => headers.append(key, v));
@@ -170,6 +170,26 @@ app.all("/kms/status", async (req, res) => {
 
 app.all("/biometric/cis", async (req, res) => {
   await proxyToRealBackend(req, res, `${PYTHON_API_URL}/health`, true);
+});
+
+// MEV attacker intel - defensive surveillance (read-only operational telemetry)
+app.all("/intel/:path*", async (req, res) => {
+  const targetUrl = `${PYTHON_API_URL}${req.originalUrl}`;
+  await proxyToRealBackend(req, res, targetUrl, true);
+});
+
+// Gov offense/analysis endpoints - proxied to real backend (dev-mode JWT bypass active)
+app.all("/analyze", async (req, res) => {
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/analyze`, false);
+});
+
+app.all("/bot/*", async (req, res) => {
+  const targetUrl = `${PYTHON_API_URL}${req.originalUrl}`;
+  await proxyToRealBackend(req, res, targetUrl, true);
+});
+
+app.all("/policy", async (req, res) => {
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/policy`, true);
 });
 
 app.all("/health", async (req, res) => {
@@ -294,8 +314,8 @@ async function startServer() {
     function startRealBackendProxy() {
       try {
         // Try to connect to real Python backend WebSocket that has real mempool connector
-        // Python backend should expose /ws or similar with real pending txs from mempool_connector.py
-        const pythonWsUrl = process.env.PYTHON_WS_URL || "ws://127.0.0.1:8080/ws";
+        // Dashboard clients expect dashboard_update + intel_update, which /ws/dashboard emits
+        const pythonWsUrl = process.env.PYTHON_WS_URL || "ws://127.0.0.1:8080/ws/dashboard";
         backendWs = new WebSocket(pythonWsUrl);
 
         backendWs.on("open", () => {

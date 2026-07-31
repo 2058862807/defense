@@ -5,7 +5,10 @@ Government: FIPS 140-3 TLS, fail-closed on missing secrets
 import logging
 from typing import Dict, Any, Optional, List
 from web3 import Web3
-from web3.middleware import ExtraDataToPOAMiddleware
+try:
+    from web3.middleware import ExtraDataToPOAMiddleware as PoAMiddleware
+except ImportError:
+    from web3.middleware import geth_poa_middleware as PoAMiddleware
 from eth_account import Account
 from eth_account.signers.local import LocalAccount
 import json
@@ -24,7 +27,7 @@ class EVMClientEnterprise:
         # Web3 HTTP with TLS - enterprise provider
         self.w3_http = Web3(Web3.HTTPProvider(self.rpc_url, request_kwargs={"timeout": 10, "verify": True}))
         # PoA middleware for L2s if needed
-        self.w3_http.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+        self.w3_http.middleware_onion.inject(PoAMiddleware, layer=0)
 
         if not self.w3_http.is_connected():
             if settings.is_production():
