@@ -205,7 +205,10 @@ export default function BotOpsView({ data }) {
   const txs = Array.isArray(live.transactions) ? live.transactions : [];
   const scored = txs.filter(t => t && t.risk_score !== undefined).length;
   const fairPolicy = policy?.fairness_policy || policy?.policy || {};
-  const src = health?.detail?.mempool_source || health?.mempool_source || live.source || 'not connected';
+  const liveTxSource = (txs.find(t => t && t.source) || {}).source;
+  const src = health?.mempool_status === 'started' || health?.mempool_status === 'running'
+    ? liveTxSource || health?.mempool_source || 'connected'
+    : liveTxSource || health?.mempool_status || health?.mempool_source || 'not connected';
 
   return (
     <div style={styles.container}>

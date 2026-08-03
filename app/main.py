@@ -594,6 +594,8 @@ async def health():
         "zk_prover_detail": prover_detail,
         "fips_compliance": "FIPS-140-3 + FIPS-203",
         "slsa_level": "L3",
+        "mempool_status": _shared_mempool_status,
+        "mempool_source": settings.evm_ws_url.get_secret_value(),
         "signer": _signer_custody_report()
     }
 
