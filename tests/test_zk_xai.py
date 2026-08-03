@@ -29,14 +29,17 @@ def test_defense_protect():
 
 def test_fairness_circuit():
     circuit = FairnessCircuit(settings.fairness_policy)
-    witness = {"type":"arbitrage","features":[[30,2,20,1000,10,1,0]], "slippage_bps":20}
+    witness = {"type":"arbitrage","features":[[30,2,20,1000,10,1,0]], "slippage_bps":20,
+               "model_hash": "abcd1234fips1403hashcommitment"}
     fair, trace = circuit.evaluate(witness)
     assert fair == True
     print(f"✓ test_fairness_circuit: arbitrage fair={fair}")
 
-    witness2 = {"type":"sandwich","features":[[50,0.5,100,500,1,0,1]], "slippage_bps":100, "value_eth":0.5}
+    witness2 = {"type":"sandwich","features":[[50,0.5,100,500,1,0,1]], "slippage_bps":100, "value_eth":0.5,
+                "model_hash": "abcd1234fips1403hashcommitment"}
     fair2, trace2 = circuit.evaluate(witness2)
     assert fair2 == False
+    assert any("small user" in r.lower() or "sandwich" in r.lower() for r in trace2["reasons"])
     print(f"✓ test_fairness_circuit: sandwich small user fair={fair2} reasons={trace2['reasons']}")
 
 if __name__ == "__main__":

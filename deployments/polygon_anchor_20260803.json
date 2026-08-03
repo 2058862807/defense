@@ -1,0 +1,23 @@
+{
+  "registry_address": "0xc8666f0b9567D447Ce6aaCC1169D15c0E35d0b79",
+  "verifier_address": "0x624331b96A857dfa2e021CD8c149b4813C38dD7C",
+  "verifier_deploy_tx": "0xc930f11dd11057ecd6231b8e9de59d3e2a08583bc902c8a41fb647c1ff1d58f3",
+  "set_verifier_tx": "0x58205425b1f8c386a4d6c5b332a6b960ddc39ded0570a1cb50ebd6c6fbed67b8",
+  "submit_tx": "0xa3cc3b905fde424f56a17e7ad327e88f29665ab73ca0c3a89acb4446e099a698",
+  "block": 91380559,
+  "input_commitment": "967e5fa69ac47744330792c82b091faa6adae706d2e4447b5adb9e4c0368e405",
+  "model_commitment": "9843c560d965d7c071051fcc92ed4d72c3f3eaf0e91bd64481b2e6497c1ed472",
+  "proof_hash": "a5ec42e8d6e8b1ad02f8a581ba61146d2d711ab3d97a5f6e1d88efb0d61800d1",
+  "case": {
+    "type": "arbitrage",
+    "value_eth": 2.0,
+    "gas_price_gwei": 30,
+    "slippage_bps": 20,
+    "pool_liquidity_eth": 1000,
+    "is_protected_user": 0
+  },
+  "is_fair": true,
+  "verified": true,
+  "chain_id": 137,
+  "timestamp": 1785781516
+}

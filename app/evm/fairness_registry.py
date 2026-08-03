@@ -171,7 +171,9 @@ class FairnessRegistryEnterprise:
 
             # Build EIP-1559 transaction
             w3 = self.client.w3_http
-            priority_fee = Web3.to_wei(1, 'gwei')
+            # Polygon (137) enforces a 25 gwei minimum priority tip; 30 gwei
+            # keeps submissions live across fee spikes without waste.
+            priority_fee = Web3.to_wei(30, 'gwei')
             latest = w3.eth.get_block("latest")
             base_fee = latest.get("baseFeePerGas") or w3.eth.gas_price
             max_fee = int(base_fee * 2) + priority_fee
@@ -239,13 +241,8 @@ class FairnessRegistryEnterprise:
             return b""
         try:
             if all(k in proof for k in ("pi_a", "pi_b", "pi_c")):
-                pi_a = [int(proof["pi_a"][0]), int(proof["pi_a"][1])]
-                # snarkjs convention: each pi_b point is emitted as [y, x] for the contract
-                pi_b = [
-                    [int(proof["pi_b"][0][1]), int(proof["pi_b"][0][0])],
-                    [int(proof["pi_b"][1][1]), int(proof["pi_b"][1][0])],
-                ]
-                pi_c = [int(proof["pi_c"][0]), int(proof["pi_c"][1])]
+                from app.zk.verifier import groth16_solidity_layout
+                pi_a, pi_b, pi_c = groth16_solidity_layout(proof)
                 from eth_abi import encode
                 return encode(
                     ["uint256[2]", "uint256[2][2]", "uint256[2]"],

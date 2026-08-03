@@ -115,7 +115,7 @@ def test_model_commitment_enterprise():
     assert scorer.commitment is not None
     assert "model_hash" in scorer.commitment
     assert len(scorer.commitment["model_hash"]) == 64  # SHA256 hex
-    assert scorer.commitment["version"] == "2.0.0-enterprise"
+    assert scorer.commitment["version"] == "2.1.0-realpolygon"
     assert "training_data_hash" in scorer.commitment
     print(f"✓ test_model_commitment_enterprise: model_hash={scorer.commitment['model_hash'][:16]}... version={scorer.commitment['version']} training_hash={scorer.commitment['training_data_hash'][:16]}...")
 

@@ -53,9 +53,14 @@ class ZKXAICouplerEnterprise:
 
         X = self.scorer.featurize(tx_data)
         
-        # Use TreeExplainer for tree models (XGBoost, RF) - exact SHAP values
+        # Use TreeExplainer for tree models (XGBoost, RF) - exact SHAP values.
+        # feature_perturbation=tree_path_dependent is required for XGBoost 2+
+        # hist-method models (interventional needs one-hot handling SHAP can't
+        # parse); tree-path-dependent SHAP values remain exact for tree models.
         try:
-            explainer = shap.TreeExplainer(self.scorer.model, data=self.background)
+            explainer = shap.TreeExplainer(
+                self.scorer.model, data=self.background,
+                feature_perturbation="tree_path_dependent")
             shap_values = explainer.shap_values(X)
             # For binary classification, shap_values is list or array
             if isinstance(shap_values, list):

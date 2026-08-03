@@ -106,11 +106,11 @@ class Settings(BaseSettings):
     fairness_policy: dict = Field(default_factory=lambda: {
         "version": "1.3.0",
         "max_slippage_bps": 50,
-        "disallow_sandwich_small_users": False,
-        "min_user_balance_for_sandwich_wei": str(0),
+        "disallow_sandwich_small_users": True,
+        "min_user_balance_for_sandwich_wei": str(int(1e18)),
         "allow_arbitrage": True,
         "allow_liquidation": True,
-        "allow_sandwich": True,
+        "allow_sandwich": False,
         "protected_routers": [
             "0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B",  # Uniswap Universal Router
         ],

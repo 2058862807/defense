@@ -19,6 +19,22 @@ logger = logging.getLogger(__name__)
 
 ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 
+
+def groth16_solidity_layout(proof: Dict) -> tuple:
+    """Convert a snarkjs proof dict into the (a, b, c) tuple expected by the
+    Groth16Verifier contract.
+
+    snarkjs emits each G2 point pi_b[k] as [imag, real]; the Solidity verifier
+    expects each row to be a G2 point [real, imag]. Swapping every row's
+    elements is mandatory - get it wrong and verification silently fails."""
+    a = [int(proof["pi_a"][0]), int(proof["pi_a"][1])]
+    b = [
+        [int(proof["pi_b"][0][1]), int(proof["pi_b"][0][0])],
+        [int(proof["pi_b"][1][1]), int(proof["pi_b"][1][0])],
+    ]
+    c = [int(proof["pi_c"][0]), int(proof["pi_c"][1])]
+    return a, b, c
+
 GROTH16_VERIFIER_ABI = [
     {
         "inputs": [
@@ -112,12 +128,7 @@ class ZKVerifierEnterprise:
                 abi=GROTH16_VERIFIER_ABI,
             )
 
-            a = [int(proof["pi_a"][0]), int(proof["pi_a"][1])]
-            b = [
-                [int(proof["pi_b"][0][0]), int(proof["pi_b"][0][1])],
-                [int(proof["pi_b"][1][0]), int(proof["pi_b"][1][1])],
-            ]
-            c = [int(proof["pi_c"][0]), int(proof["pi_c"][1])]
+            a, b, c = groth16_solidity_layout(proof)
             inp = [int(p) for p in public_inputs]
 
             valid = verifier.functions.verifyProof(a, b, c, inp).call()
