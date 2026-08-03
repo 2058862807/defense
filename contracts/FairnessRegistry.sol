@@ -9,7 +9,7 @@ pragma solidity ^0.8.20;
  * - isFair is derived from verified public inputs, not caller input
  * - Access control: only authorized submitters (no address(0) open for demo)
  * - Fail-closed: if verifier not set or proof invalid, reverts
- * - Real ceremony: combined.hash db9cf5c741a4fa79514699a37a309ce0350e35a4f0491a742e31591b3018ef7a (now f4f96c2ddd7a11e453fc60705bb13fb748e91e2a32726f6639c2276a370140a8)
+ * - Real ceremony: combined.hash 57eed88b5907eb3c5066b7f6fbf1700e87916017ebbaa8abeecaff14dc519a33
  *   WASM 1.7M + ZKEY 198K, 327 constraints, 3 participants + beacon
  */
 

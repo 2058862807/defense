@@ -23,7 +23,7 @@ FAIRNESS_ABI_ENTERPRISE = [
             {"internalType": "bytes32", "name": "modelCommitment", "type": "bytes32"},
             {"internalType": "bytes32", "name": "inputCommitment", "type": "bytes32"},
             {"internalType": "bytes", "name": "proof", "type": "bytes"},
-            {"internalType": "bool", "name": "isFair", "type": "bool"},
+            {"internalType": "uint256[3]", "name": "publicInputs", "type": "uint256[3]"},
             {"internalType": "string", "name": "metadata", "type": "string"},
             {"internalType": "bool", "name": "isOffense", "type": "bool"}
         ],
@@ -53,7 +53,8 @@ FAIRNESS_ABI_ENTERPRISE = [
                     {"internalType": "string", "name": "metadata", "type": "string"},
                     {"internalType": "address", "name": "submitter", "type": "address"},
                     {"internalType": "uint256", "name": "timestamp", "type": "uint256"},
-                    {"internalType": "bool", "name": "verified", "type": "bool"}
+                    {"internalType": "bool", "name": "verified", "type": "bool"},
+                    {"internalType": "uint256[3]", "name": "publicInputs", "type": "uint256[3]"}
                 ],
                 "internalType": "struct FairnessRegistry.FairnessRecord",
                 "name": "",
@@ -72,21 +73,33 @@ class FairnessRegistryEnterprise:
         self.verifier_address = Web3.to_checksum_address(verifier_address or settings.fairness_verifier_address) if settings.fairness_verifier_address else None
         self.contract = self.client.w3_http.eth.contract(address=self.address, abi=FAIRNESS_ABI_ENTERPRISE)
 
-    def _format_bytes32(self, hex_str: str) -> bytes:
-        """Ensure bytes32 format - for commitments which are hex strings"""
-        if not hex_str:
+    def _format_bytes32(self, val: str) -> bytes:
+        """Convert a commitment to bytes32. Handles hex strings (0x... or bare hex),
+        decimal field-element strings (snarkjs/Poseidon output)."""
+        if not val:
             return b"\x00"*32
-        h = hex_str.lower().replace("0x","")
-        if len(h) < 64:
-            h = h.ljust(64, '0')
+        s = val.strip()
+        if s.lower().startswith("0x"):
+            h = s.lower().replace("0x", "")
+        elif s.isdigit():
+            h = f"{int(s):x}"
+        elif all(c in "0123456789abcdefABCDEF" for c in s) and len(s) % 2 == 0:
+            h = s.lower()
+        else:
+            try:
+                h = val.encode().hex()
+            except Exception:
+                return b"\x00"*32
         if len(h) > 64:
-            h = h[:64]
+            h = h[-64:]
+        h = h.rjust(64, '0')
         return bytes.fromhex(h)
 
     async def submit_proof(self, zk_xai_package: Dict[str, Any], is_offense: bool = False) -> str:
         commitments = zk_xai_package.get("commitments", {})
         proof = zk_xai_package.get("zk_proof", {})
         fairness = zk_xai_package.get("fairness", {})
+        public_inputs = zk_xai_package.get("zk_public_inputs") or []
 
         if not proof and settings.require_zk_proof:
             raise ValueError("ZK proof required but not present - fail closed")
@@ -97,6 +110,18 @@ class FairnessRegistryEnterprise:
 
         model_commitment = self._format_bytes32(commitments.get("model_commitment") or commitments.get("model_commitment_hash") or "0x0")
         input_commitment = self._format_bytes32(commitments.get("input_commitment") or "0x0")
+
+        # Public inputs [isFair, modelCommitmentField, inputCommitmentField] - circuit output first
+        # snarkjs outputs public inputs in circuit order: [isFair, modelCommitment, inputCommitment]
+        if len(public_inputs) >= 3:
+            pub_inputs = [int(public_inputs[0]), int(public_inputs[1]), int(public_inputs[2])]
+        else:
+            # Derive from commitments if prover path didn't expose them
+            pub_inputs = [
+                1 if fairness.get("is_fair", True) else 0,
+                int(commitments.get("model_commitment") or "0", 16) if str(commitments.get("model_commitment") or "").startswith("0x") else int(commitments.get("model_commitment") or 0),
+                int(commitments.get("input_commitment") or "0", 16) if str(commitments.get("input_commitment") or "").startswith("0x") else int(commitments.get("input_commitment") or 0),
+            ]
 
         metadata_dict = {
             "score": zk_xai_package.get("score"),
@@ -132,7 +157,7 @@ class FairnessRegistryEnterprise:
                 model_commitment,
                 input_commitment,
                 proof_bytes,
-                is_fair,
+                pub_inputs,
                 metadata_json,
                 is_offense
             )
@@ -146,11 +171,15 @@ class FairnessRegistryEnterprise:
 
             # Build EIP-1559 transaction
             w3 = self.client.w3_http
+            priority_fee = Web3.to_wei(1, 'gwei')
+            latest = w3.eth.get_block("latest")
+            base_fee = latest.get("baseFeePerGas") or w3.eth.gas_price
+            max_fee = int(base_fee * 2) + priority_fee
             tx_data = {
                 "from": self.client.account.address if self.client.account else w3.eth.accounts[0],
                 "gas": int(gas_estimate * 1.2),  # 20% buffer
-                "maxFeePerGas": w3.eth.gas_price,  # In prod use maxFeePerGas + maxPriorityFeePerGas via fee history
-                "maxPriorityFeePerGas": Web3.to_wei(2, 'gwei'),
+                "maxFeePerGas": max_fee,
+                "maxPriorityFeePerGas": priority_fee,
                 "nonce": w3.eth.get_transaction_count(self.client.account.address) if self.client.account else 0,
                 "chainId": settings.evm_chain_id
             }
@@ -162,7 +191,7 @@ class FairnessRegistryEnterprise:
                 raise ValueError("No signer for on-chain submission")
 
             signed = self.client.account.sign_transaction(built)
-            tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
+            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 
             logger.info(f"Fairness proof submitted on-chain tx={tx_hash.hex()} fair={is_fair} offense={is_offense} model={model_commitment.hex()[:16]}")
 
@@ -204,20 +233,27 @@ class FairnessRegistryEnterprise:
             return "0x" + hashlib.sha256(json.dumps(metadata_dict).encode()).hexdigest()
 
     def _encode_proof(self, proof: Dict[str, Any]) -> bytes:
-        """Encode Groth16 proof to bytes for contract - abi.encode"""
+        """Encode Groth16 proof for on-chain verifier - abi.encode(uint256[2], uint256[2][2], uint256[2])
+        Following snarkjs soliditycalldata convention: pi_b inner points flipped to [y, x]."""
         if not proof:
             return b""
-        # Real encoding: pi_a (2x uint256), pi_b (2x2 uint256), pi_c (2x uint256)
-        # For enterprise, use properly formatted proof from snarkjs
-        # Here we CBOR/RLP encode JSON for demo, but real prod uses abi.encode
         try:
-            # If proof already has expected structure from snarkjs
             if all(k in proof for k in ("pi_a", "pi_b", "pi_c")):
-                # Encode via web3.py abi - for simplicity json.dumps then hex
-                # In production, use: eth_abi.encode(['uint256[2]','uint256[2][2]','uint256[2]'], [pi_a, pi_b, pi_c])
-                return json.dumps(proof).encode()
-            return json.dumps(proof).encode()
-        except Exception:
+                pi_a = [int(proof["pi_a"][0]), int(proof["pi_a"][1])]
+                # snarkjs convention: each pi_b point is emitted as [y, x] for the contract
+                pi_b = [
+                    [int(proof["pi_b"][0][1]), int(proof["pi_b"][0][0])],
+                    [int(proof["pi_b"][1][1]), int(proof["pi_b"][1][0])],
+                ]
+                pi_c = [int(proof["pi_c"][0]), int(proof["pi_c"][1])]
+                from eth_abi import encode
+                return encode(
+                    ["uint256[2]", "uint256[2][2]", "uint256[2]"],
+                    [pi_a, pi_b, pi_c],
+                )
+            return b""
+        except Exception as e:
+            logger.error(f"Proof ABI encoding failed: {e}")
             return b""
 
     def verify_on_chain(self, input_commitment_hex: str) -> bool:

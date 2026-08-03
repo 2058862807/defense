@@ -1,83 +1,38 @@
-version: '3.8'
 services:
-  api:
-    build: .
-    ports:
-      - "8080:8080"
-    env_file: .env
-    environment:
-      - ENV=production
-      - ZK_MODE=mock
-      - REDIS_URL=redis://redis:6379/0
-      - POSTGRES_URL=postgresql://protean:protean@postgres:5432/protean
-      - KAFKA_BROKERS=kafka:9092
-    depends_on:
-      - redis
-      - postgres
-      - kafka
-      - zk-prover
-    restart: unless-stopped
-
-  zk-prover:
-    image: protean/zk-prover:latest
+  backend:
     build:
       context: .
-      dockerfile: protean-shapes-prod/Dockerfile.zkprover
-    ports:
-      - "5000:5000"
+      dockerfile: docker/Dockerfile.backend
+    env_file: .env
     environment:
-      - PROVER_MODE=production
-    restart: unless-stopped
-    # In production, this would be Rust gnark service
-
-  redis:
-    image: redis:7-alpine
-    command: redis-server --requirepass ${REDIS_PASS:-protean_secure}
+      # dev = local/JWKS-bypass mode (matches the supervisor-run stack).
+      # Set ENV=production for fail-closed (requires real Vault/JWKS/RPC/Redis).
+      ENV: ${ENV:-dev}
+      PORT: "8080"
     ports:
-      - "6379:6379"
-
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_USER: protean
-      POSTGRES_PASSWORD: ${POSTGRES_PASS:-protean_secure}
-      POSTGRES_DB: protean
+      - "${BACKEND_PORT:-8080}:8080"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
 
-  kafka:
-    image: bitnami/kafka:3.7
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
     environment:
-      - KAFKA_CFG_NODE_ID=1
-      - KAFKA_CFG_PROCESS_ROLES=broker,controller
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      NODE_ENV: production
+      PORT: "3000"
+      PYTHON_API_URL: http://backend:8080
+      PYTHON_WS_URL: ws://backend:8080/ws
     ports:
-      - "9092:9092"
-
-  offense-bot:
-    build: .
-    command: ["python", "-m", "app.bots.offense_bot", "--iterations", "1000"]
-    env_file: .env
-    environment:
-      - BOT_MODE=offense
+      - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
-      - api
-      - kafka
+      backend:
+        condition: service_healthy
     restart: unless-stopped
-    # No internet egress except flashbots relay + private RPC - network policy
-
-  defense-bot:
-    build: .
-    command: ["python", "-m", "app.bots.defense_bot", "--iterations", "1000"]
-    env_file: .env
-    environment:
-      - BOT_MODE=defense
-    depends_on:
-      - api
-      - kafka
-    restart: unless-stopped
-
-volumes:
-  pgdata:

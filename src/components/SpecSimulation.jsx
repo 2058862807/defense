@@ -2,29 +2,29 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 
 // ─── Specs ──────────────────────────────────────────────────────────────────
 
-const IMAC_2010 = {
-  name: 'iMac 27" (2010)',
-  label: '2010 iMac',
-  cpu: 'Intel Core i5-650 — 3.2 GHz (2C/4T)',
-  ram: '8 GB DDR3 — 1066 MHz',
-  gpu: 'ATI Radeon HD 5670 — 512 MB',
-  storage: '500 GB HDD — 5400 RPM',
-  os: 'macOS 10.13 High Sierra (max)',
-  year: 2010,
+const OPTIPLEX_3080 = {
+  name: 'Dell Optiplex 3080',
+  label: 'Optiplex 3080',
+  cpu: 'Intel Core i3-10100 — 3.6 GHz (4C/8T)',
+  ram: '64 GB DDR4 — 2666 MHz',
+  gpu: 'Intel UHD Graphics 630',
+  storage: '512 GB NVMe SSD',
+  os: 'Windows 11 Pro',
+  year: 2020,
   color: '#ff6b35',
   colorDim: 'rgba(255,107,53,0.2)',
   glowColor: 'rgba(255,107,53,0.3)',
 };
 
 const SURFACE_PRO = {
-  name: 'Surface Pro 10',
-  label: 'Surface Pro 10',
-  cpu: 'Intel Core i7-1365U — 5.2 GHz (10C/12T)',
-  ram: '32 GB LPDDR5 — 6400 MHz',
-  gpu: 'Intel Iris Xe — 96 EU',
-  storage: '1 TB NVMe SSD — 7000 MB/s',
-  os: 'Windows 11 Pro',
-  year: 2024,
+  name: 'Surface Pro 4',
+  label: 'Surface Pro 4',
+  cpu: 'Intel Core i5-6300U — 2.4 GHz (2C/4T)',
+  ram: '8 GB LPDDR3 (soldered) — 1866 MHz',
+  gpu: 'Intel HD Graphics 520',
+  storage: '256 GB SSD',
+  os: 'Windows 10',
+  year: 2015,
   color: '#00f0ff',
   colorDim: 'rgba(0,240,255,0.2)',
   glowColor: 'rgba(0,240,255,0.3)',
@@ -32,19 +32,19 @@ const SURFACE_PRO = {
 
 // ─── Performance Model ──────────────────────────────────────────────────────
 
-// Realistic multipliers for 2010 iMac vs Surface Pro 10
+// Realistic multipliers for Dell Optiplex 3080 vs Surface Pro 4
 const PERF = {
-  xgbInferMs:      { imac: 280, surface: 18 },    // XGBoost 16-feature
-  shapCalcMs:      { imac: 340, surface: 22 },     // SHAP calculation
-  zkProveMs:       { imac: 45000, surface: 3200 },  // Groth16 proving
-  zkVerifyMs:      { imac: 3800, surface: 340 },    // Groth16 verify
-  tps:             { imac: 0.4, surface: 4.2 },     // Transactions per second
-  pqcKeygenMs:     { imac: 1200, surface: 85 },     // ML-KEM-1024 keygen
-  pqcSignMs:       { imac: 2800, surface: 210 },    // ML-DSA-87 sign
-  embedMs:         { imac: 890, surface: 65 },      // SSAF embedding (all-MiniLM)
-  memoryGb:        { imac: 1.8, surface: 4.2 },     // Available to app
-  fps:             { imac: 12, surface: 58 },       // Dashboard render
-  bootstrapMs:     { imac: 34000, surface: 1200 },  // App startup
+  xgbInferMs:      { dell: 26, surface: 34 },    // XGBoost 16-feature
+  shapCalcMs:      { dell: 34, surface: 48 },     // SHAP calculation
+  zkProveMs:       { dell: 8000, surface: 16000 },  // Groth16 proving
+  zkVerifyMs:      { dell: 650, surface: 1600 },    // Groth16 verify
+  tps:             { dell: 2.4, surface: 1.1 },     // Transactions per second
+  pqcKeygenMs:     { dell: 180, surface: 420 },     // ML-KEM-1024 keygen
+  pqcSignMs:       { dell: 480, surface: 950 },    // ML-DSA-87 sign
+  embedMs:         { dell: 110, surface: 190 },      // SSAF embedding (all-MiniLM)
+  memoryGb:        { dell: 32, surface: 2.2 },     // Available to app
+  fps:             { dell: 45, surface: 26 },       // Dashboard render
+  bootstrapMs:     { dell: 2500, surface: 6500 },  // App startup
 };
 
 const TOTAL_OPS = [
@@ -307,18 +307,18 @@ export default function SpecSimulation() {
     if (!vals) return {};
     const s = {};
     TOTAL_OPS.forEach(op => {
-      const imacV = op.lowerBetter ? vals[op.key]?.imac ?? 1 : vals[op.key]?.imac ?? 0;
+      const dellV = op.lowerBetter ? vals[op.key]?.dell ?? 1 : vals[op.key]?.dell ?? 0;
       const surfaceV = op.lowerBetter ? vals[op.key]?.surface ?? 1 : vals[op.key]?.surface ?? 0;
-      s[op.key] = op.lowerBetter ? imacV / surfaceV : surfaceV / (imacV || 1);
+      s[op.key] = op.lowerBetter ? surfaceV / dellV : dellV / surfaceV;
     });
     return s;
   }, [vals]);
 
-  const imacScore = useMemo(() => {
+  const dellScore = useMemo(() => {
     if (!vals) return 0;
     let total = 0;
     TOTAL_OPS.forEach(op => {
-      const v = vals[op.key]?.imac ?? 0;
+      const v = vals[op.key]?.dell ?? 0;
       const max = PERF[op.key];
       const ratio = op.lowerBetter ? (max.surface / v) : (v / max.surface);
       total += Math.min(1, ratio || 0);
@@ -346,7 +346,7 @@ export default function SpecSimulation() {
   // Boot animation: simulate both machines starting up
   useEffect(() => {
     const bootDuration = 3000;
-    const imacBootMs = PERF.bootstrapMs.imac;
+    const dellBootMs = PERF.bootstrapMs.dell;
     const surfaceBootMs = PERF.bootstrapMs.surface;
     const t0 = Date.now();
 
@@ -355,10 +355,10 @@ export default function SpecSimulation() {
       const pct = Math.min(1, elapsed / bootDuration);
       setBootProgress(pct);
 
-      const imacReadyPct = Math.min(1, (elapsed / imacBootMs) * 1.2);
+      const dellReadyPct = Math.min(1, (elapsed / dellBootMs) * 1.2);
       const surfaceReadyPct = Math.min(1, (elapsed / surfaceBootMs) * 1.2);
 
-      if (surfaceReadyPct >= 1 && imacReadyPct >= 1) {
+      if (surfaceReadyPct >= 1 && dellReadyPct >= 1) {
         clearInterval(bootIntervalRef.current);
         setPhase('running');
         const initial = {};
@@ -387,12 +387,12 @@ export default function SpecSimulation() {
         const target = PERF[op.key];
         if (op.lowerBetter) {
           frame[op.key] = {
-            imac: target.imac * (1 + (1 - ease) * 0.8),
+            dell: target.dell * (1 + (1 - ease) * 0.8),
             surface: target.surface * (1 + (1 - ease) * 0.6),
           };
         } else {
           frame[op.key] = {
-            imac: target.imac * ease,
+            dell: target.dell * ease,
             surface: target.surface * ease,
           };
         }
@@ -422,61 +422,35 @@ export default function SpecSimulation() {
               PROTEAN ZK-XAI — LIVE System
             </div>
             <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-              Loading real benchmark data for 2010 iMac vs Surface Pro 10
+              Loading real benchmark data for Dell Optiplex 3080 vs Surface Pro 4
             </div>
           </div>
         </div>
 
         <div style={styles.dualPanel}>
-          {/* iMac booting */}
-          <div style={styles.specCard(IMAC_2010)}>
-            <div style={styles.specHeader(IMAC_2010)}>
-              <div style={styles.specIcon(IMAC_2010)}>🖥</div>
+          {/* Dell booting */}
+          <div style={styles.specCard(OPTIPLEX_3080)}>
+            <div style={styles.specHeader(OPTIPLEX_3080)}>
+              <div style={styles.specIcon(OPTIPLEX_3080)}>🖥</div>
               <div>
-                <div style={styles.specTitle(IMAC_2010)}>2010 iMac</div>
+                <div style={styles.specTitle(OPTIPLEX_3080)}>Dell Optiplex 3080</div>
                 <div style={styles.specSubtitle}>Booting... {Math.min(100, (bootProgress * 100).toFixed(0))}%</div>
               </div>
             </div>
-            <div style={{ ...styles.barTrack(IMAC_2010), height: '10px', marginTop: '8px' }}>
-              <div style={{
-                height: '100%', borderRadius: '5px',
-                width: `${Math.min(100, bootProgress * 40)}%`,
-                background: `linear-gradient(90deg, ${IMAC_2010.color}, ${IMAC_2010.color}66)`,
-                transition: 'width 0.3s ease',
-                boxShadow: `0 0 10px ${IMAC_2010.glowColor}`,
-              }} />
-            </div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>
-              {bootProgress < 0.3 ? 'Warming HDD platters...' :
-               bootProgress < 0.5 ? 'Loading macOS 10.13...' :
-               bootProgress < 0.7 ? 'Initializing XGBoost model...' :
-               'Starting services...'}
-            </div>
-          </div>
-
-          {/* Surface Pro booting — much faster */}
-          <div style={styles.specCard(SURFACE_PRO)}>
-            <div style={styles.specHeader(SURFACE_PRO)}>
-              <div style={styles.specIcon(SURFACE_PRO)}>💻</div>
-              <div>
-                <div style={styles.specTitle(SURFACE_PRO)}>Surface Pro 10</div>
-                <div style={styles.specSubtitle}>Booting... {Math.min(100, (bootProgress * 200).toFixed(0))}%</div>
-              </div>
-            </div>
-            <div style={{ ...styles.barTrack(SURFACE_PRO), height: '10px', marginTop: '8px' }}>
+            <div style={{ ...styles.barTrack(OPTIPLEX_3080), height: '10px', marginTop: '8px' }}>
               <div style={{
                 height: '100%', borderRadius: '5px',
                 width: `${Math.min(100, bootProgress * 200)}%`,
-                background: `linear-gradient(90deg, ${SURFACE_PRO.color}, ${SURFACE_PRO.color}66)`,
+                background: `linear-gradient(90deg, ${OPTIPLEX_3080.color}, ${OPTIPLEX_3080.color}66)`,
                 transition: 'width 0.3s ease',
-                boxShadow: `0 0 10px ${SURFACE_PRO.glowColor}`,
+                boxShadow: `0 0 10px ${OPTIPLEX_3080.glowColor}`,
               }} />
             </div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>
-              {bootProgress < 0.15 ? 'NVMe init in 12ms...' :
-               bootProgress < 0.3 ? 'Windows 11 instant-on...' :
-               bootProgress < 0.5 ? 'Loading model (SSD cached)...' :
-               'Services online.'}
+              {bootProgress < 0.3 ? 'Reading BIOS...' :
+               bootProgress < 0.5 ? 'Loading Windows 11...' :
+               bootProgress < 0.7 ? 'Initializing XGBoost model...' :
+               'Starting services...'}
             </div>
             {/* Ready badge appears early */}
             {bootProgress > 0.45 && (
@@ -490,6 +464,32 @@ export default function SpecSimulation() {
                 READY
               </div>
             )}
+          </div>
+
+          {/* Surface Pro booting — much faster */}
+          <div style={styles.specCard(SURFACE_PRO)}>
+            <div style={styles.specHeader(SURFACE_PRO)}>
+              <div style={styles.specIcon(SURFACE_PRO)}>💻</div>
+              <div>
+                <div style={styles.specTitle(SURFACE_PRO)}>Surface Pro 4</div>
+                <div style={styles.specSubtitle}>Booting... {Math.min(100, (bootProgress * 200).toFixed(0))}%</div>
+              </div>
+            </div>
+            <div style={{ ...styles.barTrack(SURFACE_PRO), height: '10px', marginTop: '8px' }}>
+              <div style={{
+                height: '100%', borderRadius: '5px',
+                width: `${Math.min(100, bootProgress * 120)}%`,
+                background: `linear-gradient(90deg, ${SURFACE_PRO.color}, ${SURFACE_PRO.color}66)`,
+                transition: 'width 0.3s ease',
+                boxShadow: `0 0 10px ${SURFACE_PRO.glowColor}`,
+              }} />
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>
+              {bootProgress < 0.3 ? 'Reading UEFI...' :
+               bootProgress < 0.5 ? 'Loading Windows 10...' :
+               bootProgress < 0.7 ? 'Loading model...' :
+               'Services online.'}
+            </div>
           </div>
         </div>
       </div>
@@ -511,20 +511,20 @@ export default function SpecSimulation() {
             {phaseBadge}
           </div>
           <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-            2010 iMac → Surface Pro 10 · Real benchmark-driven
+            Dell Optiplex 3080 → Surface Pro 4 · Real benchmark-driven
           </div>
         </div>
         <div style={styles.kpiCard}>
-          <div style={styles.kpiLabel}>2010 iMac Score</div>
-          <div style={{ ...styles.kpiValue, color: IMAC_2010.color }}>
-            {imacScore.toFixed(0)}%
+          <div style={styles.kpiLabel}>Dell Optiplex 3080 Score</div>
+          <div style={{ ...styles.kpiValue, color: OPTIPLEX_3080.color }}>
+            {dellScore.toFixed(0)}%
           </div>
-          <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: IMAC_2010.color }}>
-            {imacScore < 20 ? 'LEGACY' : imacScore < 40 ? 'LIMITED' : 'ADEQUATE'}
+          <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: OPTIPLEX_3080.color }}>
+            {dellScore < 20 ? 'LEGACY' : dellScore < 40 ? 'LIMITED' : 'ADEQUATE'}
           </div>
         </div>
         <div style={styles.kpiCard}>
-          <div style={styles.kpiLabel}>Surface Pro 10 Score</div>
+          <div style={styles.kpiLabel}>Surface Pro 4 Score</div>
           <div style={{ ...styles.kpiValue, color: SURFACE_PRO.color }}>
             {surfaceScore.toFixed(0)}%
           </div>
@@ -535,10 +535,10 @@ export default function SpecSimulation() {
         <div style={styles.kpiCard}>
           <div style={styles.kpiLabel}>Speedup</div>
           <div style={{ ...styles.kpiValue, color: 'var(--neon-green)' }}>
-            {surfaceScore > 0 ? (surfaceScore / Math.max(1, imacScore)).toFixed(1) : '—'}×
+            {dellScore > 0 ? (dellScore / Math.max(1, surfaceScore)).toFixed(1) : '—'}×
           </div>
           <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--neon-green)' }}>
-            Aggregate performance gain
+            Optiplex advantage vs Surface
           </div>
         </div>
       </div>
@@ -547,20 +547,20 @@ export default function SpecSimulation() {
       <div style={{ position: 'relative', flex: 1 }}>
         <div style={styles.vsBadge}>VS</div>
         <div style={styles.dualPanel}>
-          {/* 2010 iMac */}
-          <div style={styles.specCard(IMAC_2010)}>
-            <div style={styles.specHeader(IMAC_2010)}>
-              <div style={styles.specIcon(IMAC_2010)}>🖥</div>
+          {/* Dell Optiplex 3080 */}
+          <div style={styles.specCard(OPTIPLEX_3080)}>
+            <div style={styles.specHeader(OPTIPLEX_3080)}>
+              <div style={styles.specIcon(OPTIPLEX_3080)}>🖥</div>
               <div>
-                <div style={styles.specTitle(IMAC_2010)}>2010 iMac</div>
-                <div style={styles.specSubtitle}>Intel Core i5-650 · 8 GB DDR3 · HDD</div>
+                <div style={styles.specTitle(OPTIPLEX_3080)}>Dell Optiplex 3080</div>
+                <div style={styles.specSubtitle}>Intel Core i3-10100 · 64 GB DDR4 · NVMe SSD</div>
               </div>
               {/* Status indicator */}
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <div style={{
                   width: '8px', height: '8px', borderRadius: '50%',
-                  background: phase === 'done' ? 'var(--neon-green)' : IMAC_2010.color,
-                  boxShadow: phase === 'done' ? '0 0 8px rgba(0,255,136,0.6)' : `0 0 8px ${IMAC_2010.glowColor}`,
+                  background: phase === 'done' ? 'var(--neon-green)' : OPTIPLEX_3080.color,
+                  boxShadow: phase === 'done' ? '0 0 8px rgba(0,255,136,0.6)' : `0 0 8px ${OPTIPLEX_3080.glowColor}`,
                 }} />
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)' }}>
                   {phase === 'done' ? 'STEADY' : 'BOOTING'}
@@ -570,50 +570,57 @@ export default function SpecSimulation() {
 
             {/* Specs */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
-              <div style={styles.specRow(IMAC_2010)}>
+              <div style={styles.specRow(OPTIPLEX_3080)}>
                 <span style={styles.specRowLabel}>CPU</span>
-                <span style={styles.specRowValue(IMAC_2010)}>i5-650 2C/4T</span>
+                <span style={styles.specRowValue(OPTIPLEX_3080)}>i3-10100 4C/8T</span>
               </div>
-              <div style={styles.specRow(IMAC_2010)}>
+              <div style={styles.specRow(OPTIPLEX_3080)}>
                 <span style={styles.specRowLabel}>RAM</span>
-                <span style={styles.specRowValue(IMAC_2010)}>8 GB DDR3</span>
+                <span style={styles.specRowValue(OPTIPLEX_3080)}>64 GB DDR4</span>
               </div>
-              <div style={styles.specRow(IMAC_2010)}>
+              <div style={styles.specRow(OPTIPLEX_3080)}>
                 <span style={styles.specRowLabel}>GPU</span>
-                <span style={styles.specRowValue(IMAC_2010)}>Radeon HD 5670</span>
+                <span style={styles.specRowValue(OPTIPLEX_3080)}>UHD 630</span>
               </div>
-              <div style={styles.specRow(IMAC_2010)}>
+              <div style={styles.specRow(OPTIPLEX_3080)}>
                 <span style={styles.specRowLabel}>Storage</span>
-                <span style={styles.specRowValue(IMAC_2010)}>500 GB HDD</span>
+                <span style={styles.specRowValue(OPTIPLEX_3080)}>512 GB NVMe</span>
               </div>
             </div>
 
             {/* Mini gauges */}
             <div style={{ display: 'flex', justifyContent: 'space-around', padding: '8px 0' }}>
-              <MiniGauge value={vals.tps?.imac ?? 0} maxValue={5} label="TX/s" color={IMAC_2010.color} />
-              <MiniGauge value={vals.fps?.imac ?? 0} maxValue={60} label="FPS" color={IMAC_2010.color} />
-              <MiniGauge value={vals.memoryGb?.imac ?? 0} maxValue={8} label="Mem GB" color={IMAC_2010.color} />
+              <MiniGauge value={vals.tps?.dell ?? 0} maxValue={5} label="TX/s" color={OPTIPLEX_3080.color} />
+              <MiniGauge value={vals.fps?.dell ?? 0} maxValue={60} label="FPS" color={OPTIPLEX_3080.color} />
+              <MiniGauge value={vals.memoryGb?.dell ?? 0} maxValue={64} label="Mem GB" color={OPTIPLEX_3080.color} />
             </div>
 
             {/* Benchmarks */}
             <div style={styles.benchmarkGrid}>
               {TOTAL_OPS.filter(op => op.key !== 'tps' && op.key !== 'memoryGb' && op.key !== 'fps').map(op => {
-                const v = vals[op.key]?.imac ?? 0;
+                const v = vals[op.key]?.dell ?? 0;
                 const surfaceTarget = PERF[op.key].surface;
                 const maxBar = op.lowerBetter ? v * 1.15 : surfaceTarget * 2;
                 const pct = op.lowerBetter
                   ? (1 - (v / maxBar)) * 100
                   : (v / maxBar) * 100;
                 return (
-                  <div key={op.key} style={styles.benchmarkRow(IMAC_2010)}>
+                  <div key={op.key} style={styles.benchmarkRow(OPTIPLEX_3080)}>
                     <div style={styles.benchmarkLabel}>
-                      <span style={styles.benchmarkName}>{op.label}</span>
-                      <span style={styles.benchmarkValue(IMAC_2010)}>
+                      <span style={styles.benchmarkName}>
+                        {op.label}
+                        {speedups[op.key] > 1.5 && (
+                          <span style={{ ...styles.speedupBadge(speedups[op.key]), marginLeft: '6px', fontSize: '9px' }}>
+                            ↑{speedups[op.key].toFixed(1)}×
+                          </span>
+                        )}
+                      </span>
+                      <span style={styles.benchmarkValue(OPTIPLEX_3080)}>
                         {op.lowerBetter ? '≥' : ''}{v.toFixed(op.key === 'zkProveMs' || op.key === 'zkVerifyMs' ? 0 : 1)} {op.unit}
                       </span>
                     </div>
-                    <div style={styles.barTrack(IMAC_2010)}>
-                      <div style={styles.barFill(IMAC_2010, pct, false)} />
+                    <div style={styles.barTrack(OPTIPLEX_3080)}>
+                      <div style={styles.barFill(OPTIPLEX_3080, pct, false)} />
                     </div>
                   </div>
                 );
@@ -621,13 +628,13 @@ export default function SpecSimulation() {
             </div>
           </div>
 
-          {/* Surface Pro 10 */}
+          {/* Surface Pro 4 */}
           <div style={styles.specCard(SURFACE_PRO)}>
             <div style={styles.specHeader(SURFACE_PRO)}>
               <div style={styles.specIcon(SURFACE_PRO)}>💻</div>
               <div>
-                <div style={styles.specTitle(SURFACE_PRO)}>Surface Pro 10</div>
-                <div style={styles.specSubtitle}>Intel Core i7-1365U · 32 GB LPDDR5 · NVMe</div>
+                <div style={styles.specTitle(SURFACE_PRO)}>Surface Pro 4</div>
+                <div style={styles.specSubtitle}>Intel Core i5-6300U · 8 GB soldered LPDDR3 · SSD</div>
               </div>
               {/* Status indicator */}
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -646,19 +653,19 @@ export default function SpecSimulation() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
               <div style={styles.specRow(SURFACE_PRO)}>
                 <span style={styles.specRowLabel}>CPU</span>
-                <span style={styles.specRowValue(SURFACE_PRO)}>i7-1365U 10C/12T</span>
+                <span style={styles.specRowValue(SURFACE_PRO)}>i5-6300U 2C/4T</span>
               </div>
               <div style={styles.specRow(SURFACE_PRO)}>
                 <span style={styles.specRowLabel}>RAM</span>
-                <span style={styles.specRowValue(SURFACE_PRO)}>32 GB LPDDR5</span>
+                <span style={styles.specRowValue(SURFACE_PRO)}>8 GB LPDDR3</span>
               </div>
               <div style={styles.specRow(SURFACE_PRO)}>
                 <span style={styles.specRowLabel}>GPU</span>
-                <span style={styles.specRowValue(SURFACE_PRO)}>Iris Xe 96EU</span>
+                <span style={styles.specRowValue(SURFACE_PRO)}>HD 520</span>
               </div>
               <div style={styles.specRow(SURFACE_PRO)}>
                 <span style={styles.specRowLabel}>Storage</span>
-                <span style={styles.specRowValue(SURFACE_PRO)}>1 TB NVMe</span>
+                <span style={styles.specRowValue(SURFACE_PRO)}>256 GB SSD</span>
               </div>
             </div>
 
@@ -674,7 +681,7 @@ export default function SpecSimulation() {
               {TOTAL_OPS.filter(op => op.key !== 'tps' && op.key !== 'memoryGb' && op.key !== 'fps').map(op => {
                 const v = vals[op.key]?.surface ?? 0;
                 const surfaceTarget = PERF[op.key].surface;
-                const badVal = PERF[op.key].imac;
+                const badVal = PERF[op.key].dell;
                 const maxBar = op.lowerBetter ? badVal * 1.15 : surfaceTarget * 2;
                 const pct = op.lowerBetter
                   ? (1 - (v / maxBar)) * 100
@@ -684,11 +691,6 @@ export default function SpecSimulation() {
                     <div style={styles.benchmarkLabel}>
                       <span style={styles.benchmarkName}>
                         {op.label}
-                        {speedups[op.key] > 1.5 && (
-                          <span style={{ ...styles.speedupBadge(speedups[op.key]), marginLeft: '6px', fontSize: '9px' }}>
-                            ↑{speedups[op.key].toFixed(1)}×
-                          </span>
-                        )}
                       </span>
                       <span style={styles.benchmarkValue(SURFACE_PRO)}>
                         {v.toFixed(op.key === 'zkProveMs' || op.key === 'zkVerifyMs' ? 0 : 1)} {op.unit}

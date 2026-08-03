@@ -270,67 +270,85 @@ class MempoolConnectorEnterprise:
             return None
 
     async def listen(self):
-        """Main listen loop for pending transactions - real mainnet"""
-        subscription_id = await self.subscribe_pending_transactions()
+        """Main listen loop for pending transactions - real mainnet, self-healing.
 
-        logger.info("Listening to real mainnet mempool...")
-
+        The initial eth_subscribe lives inside the retry loop so a connection
+        drop during subscribe reconnects instead of silently killing the task.
+        """
         while self.running:
             try:
-                message = await asyncio.wait_for(self.ws.recv(), timeout=30)
-                msg_json = json.loads(message)
-
-                # Handle subscription messages
-                if "params" in msg_json and "result" in msg_json["params"]:
-                    tx_data = msg_json["params"]["result"]
-                    # Alchemy returns tx object directly, standard returns hash only
-
-                    if isinstance(tx_data, str):
-                        # Only hash returned - need to fetch full tx via HTTP
-                        try:
-                            full_tx = self.w3_http.eth.get_transaction(tx_data)
-                            if not full_tx:
-                                continue
-                            # Convert to dict
-                            tx_dict = dict(full_tx)
-                            tx_dict["hash"] = tx_data
-                            parsed = self._parse_transaction(tx_dict)
-                        except Exception as e:
-                            logger.debug(f"Failed to fetch full tx for hash {tx_data}: {e}")
-                            continue
-                    else:
-                        # Full transaction object
-                        parsed = self._parse_transaction(tx_data)
-
-                    if not parsed:
-                        continue
-
-                    # Call registered callbacks (scorer, defense bot)
-                    for callback in self.callbacks:
-                        try:
-                            # If callback is async
-                            if asyncio.iscoroutinefunction(callback):
-                                await callback(parsed)
-                            else:
-                                callback(parsed)
-                        except Exception as e:
-                            logger.error(f"Callback failed: {e}")
-
-            except asyncio.TimeoutError:
-                # Ping to keep alive
-                try:
-                    await self.ws.ping()
-                except Exception as e:
-                    logger.warning(f"Ping failed, reconnecting: {e}")
-                    await self.reconnect()
-
-            except websockets.exceptions.ConnectionClosed as e:
-                logger.warning(f"WebSocket closed: {e}, reconnecting...")
-                await self.reconnect()
-
+                subscription_id = await self.subscribe_pending_transactions()
+                logger.info("Listening to real mainnet mempool...")
             except Exception as e:
-                logger.error(f"Mempool listen error: {e}")
-                await asyncio.sleep(1)
+                logger.error(f"Subscribe failed: {e} - reconnecting...")
+                try:
+                    await self.reconnect()
+                except Exception as e2:
+                    logger.error(f"Reconnect failed: {e2} - fail closed per gov standard")
+                    return
+                continue
+
+            while self.running:
+                try:
+                    message = await asyncio.wait_for(self.ws.recv(), timeout=30)
+                    msg_json = json.loads(message)
+
+                    # Handle subscription messages
+                    if "params" in msg_json and "result" in msg_json["params"]:
+                        tx_data = msg_json["params"]["result"]
+                        # Alchemy returns tx object directly, standard returns hash only
+
+                        if isinstance(tx_data, str):
+                            # Only hash returned - need to fetch full tx via HTTP
+                            try:
+                                full_tx = self.w3_http.eth.get_transaction(tx_data)
+                                if not full_tx:
+                                    continue
+                                # Convert to dict
+                                tx_dict = dict(full_tx)
+                                tx_dict["hash"] = tx_data
+                                parsed = self._parse_transaction(tx_dict)
+                            except Exception as e:
+                                logger.debug(f"Failed to fetch full tx for hash {tx_data}: {e}")
+                                continue
+                        else:
+                            # Full transaction object
+                            parsed = self._parse_transaction(tx_data)
+
+                        if not parsed:
+                            continue
+
+                        # Call registered callbacks (scorer, defense bot)
+                        for callback in self.callbacks:
+                            try:
+                                # If callback is async
+                                if asyncio.iscoroutinefunction(callback):
+                                    await callback(parsed)
+                                else:
+                                    callback(parsed)
+                            except Exception as e:
+                                logger.error(f"Callback failed: {e}")
+
+                except asyncio.TimeoutError:
+                    # Ping to keep alive
+                    try:
+                        await self.ws.ping()
+                    except Exception as e:
+                        logger.warning(f"Ping failed, reconnecting: {e}")
+                        break
+                except websockets.exceptions.ConnectionClosed as e:
+                    logger.warning(f"WebSocket closed: {e}, reconnecting...")
+                    break
+                except Exception as e:
+                    logger.error(f"Mempool listen error: {e}")
+                    await asyncio.sleep(1)
+
+            if self.running:
+                try:
+                    await self.reconnect()
+                except Exception as e2:
+                    logger.error(f"Reconnect failed: {e2} - fail closed per gov standard")
+                    return
 
     async def reconnect(self):
         """Exponential backoff reconnection - government resilience"""

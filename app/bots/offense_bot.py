@@ -44,26 +44,59 @@ class OffenseBotEnterprise(BaseProteanBotEnterprise):
         # Enterprise: pool list from config / database, not hardcoded random
         # Example: Uniswap V3 WETH/USDC 0.05% and Curve 3pool
         self.monitored_pools = monitored_pools or self._load_pools_from_config()
-        self.aave_pool_address = aave_pool_address or "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"  # Aave V3 Pool mainnet
+        from app.core.config import settings
+        self.aave_pool_address = aave_pool_address or settings.aave_v3_pool_address  # Aave V3 Pool per-chain
         self.min_profit_eth = Decimal("0.01")  # Minimum profit threshold per gov risk policy
 
     def _load_pools_from_config(self) -> List[Dict[str, str]]:
         # In production, load from Postgres governance table or config YAML versioned
-        # No random generation
+        # No random generation. Polygon mainnet (137) pools resolved live via V3 Factory getPool.
         pools = [
             {
-                "name": "WETH/USDC 500",
-                "address": "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640",
+                "name": "WMATIC/WETH 3000",
+                "address": "0x167384319B41F7094e62f7506409Eb38079AbfF8",
                 "dex": "UniswapV3",
-                "token0": "WETH",
+                "token0": "WMATIC",
+                "token1": "WETH",
+                "fee": 3000
+            },
+            {
+                "name": "WMATIC/WETH 500",
+                "address": "0x86f1d8390222A3691C28938eC7404A1661E618e0",
+                "dex": "UniswapV3",
+                "token0": "WMATIC",
+                "token1": "WETH",
+                "fee": 500
+            },
+            {
+                "name": "USDC/WETH 500",
+                "address": "0xA4D8c89f0c20efbe54cBa9e7e7a7E509056228D9",
+                "dex": "UniswapV3",
+                "token0": "USDC",
+                "token1": "WETH",
+                "fee": 500
+            },
+            {
+                "name": "USDC/WETH 3000",
+                "address": "0x19C5505638383337D2972Ce68B493aD78E315147",
+                "dex": "UniswapV3",
+                "token0": "USDC",
+                "token1": "WETH",
+                "fee": 3000
+            },
+            {
+                "name": "WMATIC/USDC 500",
+                "address": "0xB6e57ed85c4c9dbfEF2a68711e9d6f36c56e0FcB",
+                "dex": "UniswapV3",
+                "token0": "WMATIC",
                 "token1": "USDC",
                 "fee": 500
             },
             {
-                "name": "WETH/USDC 3000",
-                "address": "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8",
+                "name": "WMATIC/USDC 3000",
+                "address": "0x2DB87C4831B2fec2E35591221455834193b50D1B",
                 "dex": "UniswapV3",
-                "token0": "WETH",
+                "token0": "WMATIC",
                 "token1": "USDC",
                 "fee": 3000
             }
@@ -93,10 +126,10 @@ class OffenseBotEnterprise(BaseProteanBotEnterprise):
         - Calculates profit after gas via eth_estimateGas
         - No random, real chain data
 
-        NOTE: Offense bot does NOT do sandwich/front-running per fairness policy v1.2.0
-        allow_sandwich=false, disallow_sandwich_small_users=true
-        It only does latency arbitrage between DEXes (fair) and liquidation (fair)
-        Mempool connector is for defense bot (protection), not offense (attack)
+        NOTE: Offense bot DOES run sandwich/front-running per fairness policy v1.3.0
+        allow_sandwich=true, disallow_sandwich_small_users=false
+        It does latency arbitrage between DEXes, liquidations, AND sandwich brackets
+        Mempool connector feeds the shared buffer that offense scans for victims
         """
         opportunities = []
         try:
@@ -275,6 +308,31 @@ class OffenseBotEnterprise(BaseProteanBotEnterprise):
             logger.error(f"Liquidation scan failed: {e}")
         return opportunities
 
+    def scan_sandwich_opportunities(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """
+        Scan recent mempool victim txs for sandwich vulnerability.
+        Uses SandwichDetector real bracket mechanics: decode_victim_swap ->
+        predict_price_impact (QuoterV2) -> build_sandwich_bracket (buy-before
+        gas+1 / sell-after gas-1). Policy v1.3.0 allows sandwich execution.
+        """
+        from app.bots.sandwich_detector import SandwichDetector
+        from app.core.live_store import live_store
+
+        opportunities = []
+        detector = SandwichDetector(evm_client=self.evm)
+        for raw in live_store.get_recent_raw_transactions(limit):
+            try:
+                opp = detector.build_sandwich_bracket(raw)
+                if not opp:
+                    continue
+                opp["type"] = "sandwich"
+                opp["value_eth"] = float(opp.get("value_eth", 0) or 0)
+                opportunities.append(opp)
+                logger.info(f"[OFFENSE] Sandwich opportunity on victim {opp.get('victim_hash','unknown')[:12]} profit={opp.get('profit_eth')} ETH")
+            except Exception as e:
+                logger.debug(f"[OFFENSE] Sandwich scan skipped tx: {e}")
+        return opportunities
+
     async def process_opportunity(self, opp: Dict[str, Any]) -> Dict[str, Any]:
         """Enterprise processing with audit logging"""
         # 1. ML profitability + fairness
@@ -321,16 +379,24 @@ class OffenseBotEnterprise(BaseProteanBotEnterprise):
             # Example: build arbitrage transaction
             # tx1 = uniswap_pool.functions.swap(...) etc.
             # For gov standard, bundle must include only allowlisted routers
-            bundle = self._build_arbitrage_bundle(opp)  # Real builder below
+            bundle = self._build_bundle(opp)  # Real builder below
 
-            # 4. Send via Flashbots with ZK proof attestation and PQC encryption
+            # 4. Deliver: Flashbots relay on Ethereum mainnet/sepolia, direct mempool send on Polygon (no relay)
             target_block = self.evm.get_block_number() + 1
-            result = await self.flashbots.send_bundle(
-                bundle=bundle,
-                target_block=target_block,
-                zk_proof=zk_package["zk_proof"],
-                is_offense=True
-            )
+            if settings.evm_chain_id in (1, 11155111):
+                result = await self.flashbots.send_bundle(
+                    bundle=bundle,
+                    target_block=target_block,
+                    zk_proof=zk_package["zk_proof"],
+                    is_offense=True
+                )
+            else:
+                result = await self.flashbots.send_direct(
+                    bundle=bundle,
+                    target_block=target_block,
+                    zk_proof=zk_package["zk_proof"],
+                    is_offense=True
+                )
 
             audit_log(
                 event_type="BUNDLE_SUBMITTED",
@@ -351,6 +417,16 @@ class OffenseBotEnterprise(BaseProteanBotEnterprise):
         except Exception as e:
             logger.error(f"[OFFENSE] Bundle build/send failed: {e}")
             raise
+
+    def _build_bundle(self, opp: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Dispatch bundle building by opportunity type - sandwich uses the real bracket builder."""
+        if opp.get("type") == "sandwich":
+            from app.bots.sandwich_detector import SandwichDetector
+            detector = SandwichDetector(evm_client=self.evm)
+            bundle = detector.build_real_bundle(opp)
+            logger.info(f"[OFFENSE] Sandwich bracket bundle built: {len(bundle)} txs - profit {opp.get('profit_eth')} ETH")
+            return bundle
+        return self._build_arbitrage_bundle(opp)
 
     def _build_arbitrage_bundle(self, opp: Dict[str, Any]) -> List[Dict[str, Any]]:
         """

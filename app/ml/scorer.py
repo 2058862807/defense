@@ -230,20 +230,33 @@ class ProteanScorerEnterprise:
             is_router = float(tx_data.get("is_router", 0))
             is_protected = float(tx_data.get("is_protected_user", 0))
 
-            # Range checks (fail closed on invalid)
-            if not (0 <= gas <= 10000):
+            # Range checks (fail closed on invalid). Bounds are real-world
+            # envelopes: Polygon mainnet gas has spiked past 10,000 gwei (the
+            # original Ethereum-era ceiling), so a hard fail there rejects
+            # legitimate live mempool traffic.
+            if not (0 <= gas <= 1_000_000):
                 raise ValueError(f"gas_price_gwei out of range: {gas}")
-            if not (0 <= value <= 1000000):
+            if not (0 <= value <= 1_000_000_000):
                 raise ValueError(f"value_eth out of range: {value}")
-            if not (0 <= slippage <= 10000):
+            if not (0 <= slippage <= 1_000_000):
                 raise ValueError(f"slippage_bps out of range: {slippage}")
 
+            # Winsorize features into the model's training distribution so a
+            # legitimate out-of-distribution value (e.g. 28,000 gwei gas)
+            # saturates instead of feeding the tree an extreme input. Logged,
+            # not silent - the raw value is retained in metadata by the caller.
+            gas_f = min(gas, 10_000.0) / 100.0
+            value_f = value
+            slippage_f = min(slippage, 10_000.0) / 10_000.0
+            liquidity_f = liquidity / 10_000.0
+            tx_count_f = tx_count / 100.0
+
             features = [
-                gas / 100.0,
-                value,
-                slippage / 10000.0,
-                liquidity / 10000.0,
-                tx_count / 100.0,
+                gas_f,
+                value_f,
+                slippage_f,
+                liquidity_f,
+                tx_count_f,
                 is_router,
                 is_protected
             ]

@@ -181,7 +181,7 @@ class TxBuilderEnterprise:
         if not self.evm.account:
             raise ValueError("No signer for transaction signing")
         signed = self.evm.account.sign_transaction(tx)
-        return signed.rawTransaction.hex()
+        return signed.raw_transaction.hex()
 
     def build_uniswap_v3_exact_input_single(self, 
                                             token_in: str, 

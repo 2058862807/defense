@@ -311,9 +311,17 @@ export function useLiveData() {
         addTerminalLog('info', '[LIVE] Connected to PROTEAN backend');
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = async (event) => {
         try {
-          const data = JSON.parse(event.data);
+          let raw = event.data;
+          if (typeof raw !== 'string') {
+            if (raw instanceof Blob) {
+              raw = await raw.text();
+            } else if (raw instanceof ArrayBuffer) {
+              raw = new TextDecoder().decode(raw);
+            }
+          }
+          const data = JSON.parse(raw);
           if (data.type === 'welcome' || data.type === 'connected') {
             console.log('[LiveData] WS welcome received — connection confirmed');
             setIsLive(true);

@@ -31,6 +31,22 @@ OFAC_FEEDS = {
 
 # For government standard, we also support OFAC SDN List API via https://sanctionssearch.ofac.treas.gov/ but CSV is primary
 
+_DIGITAL_ADDRESS_COLUMN_HINTS = ("digital currency address", "digital_currency_address", "address")
+
+
+def _extract_digital_addresses(row: dict, normalized: dict) -> List[str]:
+    """SDN.CSV carries 'Digital Currency Address - Address' columns (one per
+    asset). Extract every 0x-hex value so we can screen addresses, not just names."""
+    found: List[str] = []
+    for key, value in row.items():
+        kl = (key or "").strip().lower()
+        if any(hint in kl for hint in _DIGITAL_ADDRESS_COLUMN_HINTS) and value:
+            found.append(str(value).strip())
+    for key, value in normalized.items():
+        if value and str(value).strip().lower().startswith("0x") and len(str(value).strip()) == 42:
+            found.append(str(value).strip())
+    return list(dict.fromkeys(found))
+
 class OFACFeed:
     def __init__(self, cache=None):
         from .cache import compliance_cache
@@ -80,6 +96,7 @@ class OFACFeed:
                         "program": normalized.get("program") or row.get("Program"),
                         "title": normalized.get("title") or row.get("Title"),
                         "uid": normalized.get("uid") or normalized.get("ent_num"),
+                        "addresses": _extract_digital_addresses(row, normalized),
                         "raw": row
                     }
                     sdn_list.append(sdn)
@@ -175,6 +192,25 @@ class OFACFeed:
             "source": "live" if self.last_fetch else "cached",
             "list_size": len(sdn_list)
         }
+
+    def find_by_address(self, address: str) -> Optional[Dict[str, Any]]:
+        """Find an SDN entry whose digital currency address column matches a
+        normalized 0x address (used by the address-risk engine)."""
+        addr = (address or "").strip().lower()
+        if not addr:
+            return None
+        sdn_list = self.get_sdn_list()
+        for entry in sdn_list:
+            for candidate in entry.get("addresses", []) or []:
+                if candidate.strip().lower() == addr:
+                    return {
+                        "address": address,
+                        "sdn_name": entry.get("sdn_name"),
+                        "ent_num": entry.get("ent_num"),
+                        "program": entry.get("program"),
+                        "list": "OFAC SDN (digital currency address)",
+                    }
+        return None
 
     def get_stats(self) -> Dict[str, Any]:
         sdn_list = self.get_sdn_list()

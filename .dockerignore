@@ -1,0 +1,28 @@
+# Runtime state - never baked into images
+data/
+secrets/
+*.enc
+
+# Secrets / local env
+.env
+
+# Build artifacts (rebuilt in the image)
+dist/
+frontend/dist/
+node_modules/
+venv/
+
+# VCS
+.git/
+.gitignore
+
+# ZK ceremony transcripts (large, reproduced per-build)
+circuits/ceremony/transcript/
+*.ptau
+
+# Logs / caches
+*.log
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/e2e/results.json

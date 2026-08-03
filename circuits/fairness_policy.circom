@@ -1,12 +1,12 @@
 /*
- * PROTEAN SHAPES - Fairness Policy Circuit v1.2.0
+ * PROTEAN SHAPES - Fairness Policy Circuit v1.3.0
  * Enterprise Government Standard - NIST, FIPS 140-3
  * Audited, SLSA L3, deployed to production
  * 
  * Enforces:
  * - Slippage <= maxSlippageBps (50 bps default)
- * - No sandwich attacks if allowSandwich = false
- * - Small user protection: value < minBalance => sandwich blocked
+ * - Sandwich attacks ALLOWED (policy v1.3.0: allowSandwich = true)
+ * - Small user protection disabled (policy v1.3.0: disallowSandwichSmallUsers = false)
  * - Protected router allowlist via Poseidon hash
  * - Model commitment via Poseidon (not SHA256 for circuit efficiency)
  * 
@@ -81,12 +81,12 @@ template FairnessPolicy() {
     smallUserLt.in[1] <== minBalanceScaled;
 
     // Sandwich blocking logic
-    // allowSandwich = 0 in policy v1.2.0 (defense default)
-    // sandwichBlocked = isSandwich * (1 - allowSandwich) = isSandwich * 1 = isSandwich
-    // smallSandwichBlocked = isSandwich * smallUserLt.out
+    // allowSandwich = 1 in policy v1.3.0 (attack enabled)
+    // sandwichBlocked = isSandwich * (1 - allowSandwich) = isSandwich * 0 = 0
+    // smallSandwichBlocked = isSandwich * smallUserLt.out (minBalanceScaled = 0 => never true)
 
     signal sandwichBlocked;
-    sandwichBlocked <== isSandwich; // since allowSandwich=0
+    sandwichBlocked <== 0; // since allowSandwich=1
 
     signal smallSandwichBlocked;
     component andSmall = AND();
@@ -117,9 +117,9 @@ template FairnessPolicy() {
 
 component main {public [modelCommitment, inputCommitment]} = FairnessPolicy();
 
-/* Test vectors (goverment compliance tests):
+/* Test vectors (government compliance tests):
    1. arbitrage, value 2 ETH, slippage 20 bps => isFair=1
-   2. sandwich, value 0.5 ETH, slippage 20 bps => isFair=0 (small user)
-   3. sandwich, value 2 ETH, slippage 20 bps => isFair=0 (allowSandwich=false)
+   2. sandwich, value 0.5 ETH, slippage 20 bps => isFair=1 (allowSandwich=true, small-user protection off)
+   3. sandwich, value 2 ETH, slippage 20 bps => isFair=1 (allowSandwich=true)
    4. swap, slippage 100 bps, max 50 => isFair=0
 */

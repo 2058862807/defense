@@ -1,0 +1,35 @@
+# PROTEAN SHAPES - Backend (FastAPI + real ML/ZK/compliance)
+# FIPS 140-3 TLS, RS256 JWT via JWKS, fail-closed in production.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# System deps for numpy/xgboost/shap wheels + ZK snarkjs build tools.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl gcc g++ make nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.enterprise.txt ./
+RUN pip install --upgrade pip && pip install -r requirements.enterprise.txt
+
+# Application (models, ZK artifacts, contracts, source).
+COPY app ./app
+COPY models ./models
+COPY circuits ./circuits
+COPY contracts ./contracts
+COPY scripts ./scripts
+COPY server.ts package.json ./
+
+# Durable runtime state (ledger, audit trail, encrypted secrets, compliance cache).
+RUN mkdir -p data && chmod 700 data
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:8080/health || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

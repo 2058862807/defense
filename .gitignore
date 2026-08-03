@@ -51,3 +51,15 @@ tests/e2e/results.json
 # Coverage
 coverage/
 .nyc_output/
+
+# Runtime data
+/data/
+*.enc
+
+# Runtime secrets + audit data - never commit
+data/secrets.enc
+data/audit.jsonl
+data/ledger.db
+data/ledger.db-*
+data/sanctions_shadow.json
+certs/

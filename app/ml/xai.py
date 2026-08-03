@@ -66,10 +66,7 @@ class ZKXAICouplerEnterprise:
                 shap_values = shap_values[0]
         except Exception as e:
             logger.error(f"SHAP TreeExplainer failed: {e}")
-            if settings.is_production():
-                raise
-            # Dev fallback - not allowed in prod
-            shap_values = X[0] * 0.1
+            raise
 
         feature_names = ["gas_price_gwei", "value_eth", "slippage_bps", "pool_liquidity", "tx_count", "is_router", "is_protected"]
 
@@ -131,7 +128,11 @@ class ZKXAICouplerEnterprise:
             "policy": settings.fairness_policy,
             "is_fair": self._check_fairness(tx_data, score),
             "policy_version": settings.fairness_policy_version,
-            "model_version": meta.get("model_version")
+            "model_version": meta.get("model_version"),
+            "type": tx_data.get("type", "swap"),
+            "is_sandwich": 1 if tx_data.get("type") == "sandwich" or tx_data.get("is_sandwich") else 0,
+            "is_protected_user": tx_data.get("is_protected_user", 0),
+            "slippage_bps": tx_data.get("slippage_bps", settings.fairness_policy.get("max_slippage_bps", 50)),
         }
 
         prover = ZKProverEnterprise()
@@ -180,11 +181,12 @@ class ZKXAICouplerEnterprise:
     def _check_fairness(self, tx_data: dict, score: float) -> bool:
         from app.zk.fairness_circuit import FairnessCircuit
         circuit = FairnessCircuit(settings.fairness_policy)
+        X = self.scorer.featurize(tx_data)
         fair, _ = circuit.evaluate({
-            "type": tx_data.get("type","swap"),
-            "features": [[tx_data.get("gas_price_gwei",0)/100.0, tx_data.get("value_eth",0), tx_data.get("slippage_bps",0), tx_data.get("pool_liquidity_eth",1000)/10000.0, 1, 0, tx_data.get("is_protected_user",0)]],
-            "slippage_bps": tx_data.get("slippage_bps",0),
-            "value_eth": tx_data.get("value_eth",0),
+            "type": tx_data.get("type", "swap"),
+            "features": X.tolist(),
+            "slippage_bps": tx_data.get("slippage_bps", 0),
+            "value_eth": tx_data.get("value_eth", 0),
             "model_hash": self.scorer.commitment.get("model_hash") if self.scorer.commitment else "unknown"
         })
         return fair
@@ -192,12 +194,13 @@ class ZKXAICouplerEnterprise:
     def _fairness_reasons(self, tx_data: dict):
         from app.zk.fairness_circuit import FairnessCircuit
         circuit = FairnessCircuit(settings.fairness_policy)
+        X = self.scorer.featurize(tx_data)
         _, trace = circuit.evaluate({
-            "type": tx_data.get("type","swap"),
-            "features": [[0, tx_data.get("value_eth",0), tx_data.get("slippage_bps",0), 0, 0, 0, 0]],
-            "slippage_bps": tx_data.get("slippage_bps",0),
-            "value_eth": tx_data.get("value_eth",0),
-            "model_hash": "unknown"
+            "type": tx_data.get("type", "swap"),
+            "features": X.tolist(),
+            "slippage_bps": tx_data.get("slippage_bps", 0),
+            "value_eth": tx_data.get("value_eth", 0),
+            "model_hash": self.scorer.commitment.get("model_hash") if self.scorer.commitment else "unknown"
         })
         return trace.get("reasons", [])
 

@@ -20,9 +20,11 @@ import QrngEntropy from './components/QrngEntropy';
 import WebMasterAgentPanel from './components/WebMasterAgentPanel';
 import ZkXaiCouplingView from './components/ZkXaiCouplingView';
 import SandwichDetector from './components/SandwichDetector';
+import BotOpsView from './components/BotOpsView';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'DASHBOARD', icon: '◈' },
+  { id: 'bots', label: 'BOT OPS', icon: '⚔' },
   { id: 'zkxai', label: 'ZK XAI COUPLING', icon: '🔑' },
   { id: 'sandwich', label: 'SANDWICH DETECT', icon: '🥪' },
   { id: 'biometrics', label: 'BIOMETRICS', icon: '🧬' },
@@ -463,10 +465,12 @@ function NeuralView({ data }) {
 
 function QuantumView({ data }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
-      <div style={styles.panelCard}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, minHeight: 0 }}>
+      <div style={{ ...styles.panelCard, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={styles.panelTitle}>⟁ Quantum Key Network (PQC KMS)</div>
-        <QknVisualization metrics={data?.metrics || {}} />
+        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          <QknVisualization metrics={data?.metrics || {}} />
+        </div>
       </div>
     </div>
   );
@@ -564,6 +568,7 @@ export default function App() {
     const viewProps = { data: liveData, isLive };
     switch (activeView) {
       case 'dashboard': return <ProteanDefaultView {...viewProps} />;
+      case 'bots': return <BotOpsView {...viewProps} />;
       case 'zkxai': return <ZkXaiCouplingView {...viewProps} />;
       case 'sandwich': return <SandwichView {...viewProps} />;
       case 'biometrics': return <BiometricsSuite />;

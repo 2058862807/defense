@@ -9,6 +9,7 @@ import logging
 import json
 import base64
 import time
+import asyncio
 from typing import List, Dict, Any, Optional
 import httpx
 from eth_account import Account
@@ -27,27 +28,37 @@ except ImportError:
     HAS_FLASHBOTS_LIB = False
 
 class FlashbotsClientEnterprise:
+    SEPOLIA_RELAY = "https://relay-sepolia.flashbots.net"
+
     def __init__(self, relay_url: str = None, signing_key_path: str = None):
-        self.relay_url = relay_url or settings.flashbots_relay_url
+        self.relay_url = relay_url or self._resolve_relay_url()
         self.signing_key_path = signing_key_path or settings.vault_kv_path_flashbots
         self.auth_account: Optional[Account] = None
         self.w3 = None
         self.flashbots_provider = None
         self._load_auth_signer()
 
+    def _resolve_relay_url(self) -> str:
+        """Flashbots mainnet relay does not serve Sepolia - route to Sepolia relay."""
+        if settings.evm_chain_id == 11155111:
+            return settings.flashbots_relay_url if "sepolia" in (settings.flashbots_relay_url or "") else self.SEPOLIA_RELAY
+        return settings.flashbots_relay_url
+
     def _load_auth_signer(self):
-        """Load Flashbots auth signer from Vault"""
+        """Load Flashbots auth signer from Vault (or local encrypted store in dev)"""
         try:
-            from app.core.security import get_secret_from_vault
-            secret = get_secret_from_vault(
+            from app.core.secrets_store import resolve_secret
+            secret = resolve_secret(
+                self.signing_key_path,
                 settings.vault_addr,
                 settings.vault_role_id,
                 settings.vault_secret_id.get_secret_value(),
-                self.signing_key_path
             )
+            if not secret:
+                raise ValueError("Flashbots signing key not found (Vault or local store)")
             signing_key = secret.get("signing_key") or secret.get("flashbots_signing_key")
             if not signing_key:
-                raise ValueError("Flashbots signing key not in Vault")
+                raise ValueError("Flashbots signing key not in secret")
             if not signing_key.startswith("0x"):
                 signing_key = "0x" + signing_key
             self.auth_account = Account.from_key(signing_key)
@@ -171,18 +182,17 @@ class FlashbotsClientEnterprise:
         except Exception as e:
             logger.error(f"Flashbots bundle submission failed: {e}")
             raise
-
     def _fetch_relay_pubkey(self) -> bytes:
-        """Fetch relay ML-KEM pubkey from Vault or endpoint"""
+        """Fetch relay ML-KEM pubkey from Vault or local secrets store"""
         try:
-            from app.core.security import get_secret_from_vault
-            secret = get_secret_from_vault(
+            from app.core.secrets_store import resolve_secret
+            secret = resolve_secret(
+                "secret/data/prod/relay-pqc-pubkey",
                 settings.vault_addr,
                 settings.vault_role_id,
                 settings.vault_secret_id.get_secret_value(),
-                "secret/data/prod/relay-pqc-pubkey"
             )
-            b64 = secret.get("public_key")
+            b64 = secret.get("public_key") if secret else None
             if b64:
                 return base64.b64decode(b64)
         except Exception as e:
@@ -194,6 +204,7 @@ class FlashbotsClientEnterprise:
                 resp = client.get(f"{self.relay_url.rstrip('/')}/pubkey")
                 if resp.status_code == 200:
                     return base64.b64decode(resp.json()["public_key"])
+
         except Exception:
             pass
 
@@ -203,6 +214,46 @@ class FlashbotsClientEnterprise:
             pub, _ = ml_kem_keypair(settings.ml_kem_variant)
             return pub
         raise RuntimeError("Relay PQC public key not available - required for production PQC encryption")
+
+    async def send_direct(self, bundle: List[Dict[str, Any]], target_block: int, zk_proof: Dict = None, is_offense: bool = True) -> Dict[str, Any]:
+        """
+        Direct mempool delivery for chains without a Flashbots relay (Polygon, chain 137).
+        Broadcasts each signed raw tx via eth_sendRawTransaction on the configured EVM RPC,
+        sequencing buy-before / sell-after around the already-in-mempool victim.
+        Returns a bundle-shaped result for API compatibility.
+        """
+        if not bundle:
+            raise ValueError("Empty bundle")
+
+        from app.core.config import settings
+        w3 = Web3(Web3.HTTPProvider(settings.evm_rpc_url.get_secret_value(), request_kwargs={"timeout": 30}))
+
+        hashes = []
+        for idx, tx in enumerate(bundle):
+            raw = tx.get("signed_transaction") or tx.get("signed_tx") or tx.get("raw")
+            if not raw:
+                logger.warning(f"Direct send skipped unsigned tx at index {idx}")
+                continue
+            try:
+                tx_hash = w3.eth.send_raw_transaction(raw)
+                hashes.append(tx_hash.hex())
+                logger.info(f"Direct tx {idx} broadcast hash={tx_hash.hex()} type={tx.get('type','tx')} chain=137")
+                # Small gap so buy-before confirms before sell-after on a busy mempool
+                if idx < len(bundle) - 1:
+                    await asyncio.sleep(0.4)
+            except Exception as e:
+                logger.error(f"Direct tx {idx} broadcast failed: {e}")
+
+        result = {
+            "result": {
+                "bundleHash": Web3.keccak(text=json.dumps(hashes)).hex() if hashes else "",
+                "txHashes": hashes,
+                "delivery": "direct_eth_sendRawTransaction",
+                "relay": "polygon_public_mempool"
+            }
+        }
+        logger.info(f"Direct bundle delivered block={target_block} txs={len(hashes)} offense={is_offense}")
+        return result
 
     async def close(self):
         pass
