@@ -27,6 +27,13 @@ from app.core.logging import audit_log
 
 logger = logging.getLogger(__name__)
 
+# Polygon mainnet token addresses (monitored pools are WMATIC/WETH and USDC/WETH)
+POLYGON_TOKENS = {
+    "WMATIC": "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",
+    "WETH": "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",
+    "USDC": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
+}
+
 # Enterprise ABIs (real, not mocked) - minimal for scanning
 UNISWAP_V3_POOL_ABI = [
     {"inputs":[],"name":"slot0","outputs":[{"name":"sqrtPriceX96","type":"uint160"},{"name":"tick","type":"int24"},{"name":"observationIndex","type":"uint16"},{"name":"observationCardinality","type":"uint16"},{"name":"observationCardinalityNext","type":"uint16"},{"name":"feeProtocol","type":"uint8"},{"name":"unlocked","type":"bool"}],"stateMutability":"view","type":"function"},
@@ -59,8 +66,7 @@ class OffenseBotEnterprise(BaseProteanBotEnterprise):
                 "token0": "WMATIC",
                 "token1": "WETH",
                 "fee": 3000
-            },
-            {
+            },            {
                 "name": "WMATIC/WETH 500",
                 "address": "0x86f1d8390222A3691C28938eC7404A1661E618e0",
                 "dex": "UniswapV3",
@@ -101,6 +107,9 @@ class OffenseBotEnterprise(BaseProteanBotEnterprise):
                 "fee": 3000
             }
         ]
+        for pool in pools:
+            pool["token0_address"] = POLYGON_TOKENS.get(pool["token0"], pool["token0"])
+            pool["token1_address"] = POLYGON_TOKENS.get(pool["token1"], pool["token1"])
         return pools
 
     def _fetch_pool_price(self, pool_address: str) -> Dict[str, Any]:
@@ -267,6 +276,11 @@ class OffenseBotEnterprise(BaseProteanBotEnterprise):
                         "dex_b": p2["dex"],
                         "pool_a": p1["address"],
                         "pool_b": p2["address"],
+                        "fee_a": p1.get("fee", 3000),
+                        "fee_b": p2.get("fee", 3000),
+                        "token0": p1["token0_address"],
+                        "token1": p1["token1_address"],
+                        "token_mid": p1["token1_address"],
                         "price_a": str(p1["price"]),
                         "price_b": str(p2["price"]),
                         "deviation_bps": float(deviation_bps),

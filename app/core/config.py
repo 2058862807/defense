@@ -63,6 +63,14 @@ class Settings(BaseSettings):
 
     # Aave V3 Pool, per-chain. Default = Polygon mainnet (137).
     aave_v3_pool_address: str = "0x794a61358D6845594F94dc1DB02A252b5b4814aD"
+    # Deployed FlashLoanReceiver contract that Aave calls back into. The EOA
+    # signer cannot receive executeOperation, so all flash loan arbs must route
+    # through this contract. Polygon mainnet deployment.
+    flash_loan_receiver_address: str = "0xBbdCF35C08d74e23233C5e6Bb7aAaD0DCD21259b"
+    # Polygon token addresses for the monitored Uniswap V3 pools.
+    poly_wmatic: str = "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270"
+    poly_weth: str = "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"
+    poly_usdc: str = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"
 
     # --- PQC ---
     # ML-KEM is NIST FIPS 203, required

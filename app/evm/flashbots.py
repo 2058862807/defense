@@ -64,10 +64,12 @@ class FlashbotsClientEnterprise:
             self.auth_account = Account.from_key(signing_key)
             logger.info(f"Flashbots auth signer loaded address={self.auth_account.address}")
         except Exception as e:
-            if settings.is_production():
+            # Polygon (137) delivers via send_direct (eth_sendRawTransaction) and
+            # never touches a Flashbots relay, so an auth signer is not required there.
+            if settings.evm_chain_id in (1, 11155111) and settings.is_production():
                 logger.error(f"Failed to load Flashbots auth from Vault: {e}")
                 raise
-            logger.warning(f"Dev mode - Flashbots auth not loaded: {e}")
+            logger.warning(f"Flashbots auth not loaded (chain {settings.evm_chain_id}, direct-send path): {e}")
 
     def _get_web3_with_flashbots(self, rpc_url: str):
         """Create Web3 with Flashbots middleware"""
