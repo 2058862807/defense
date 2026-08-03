@@ -209,6 +209,28 @@ export default function BotOpsView({ data }) {
   const src = health?.mempool_status === 'started' || health?.mempool_status === 'running'
     ? liveTxSource || health?.mempool_source || 'connected'
     : liveTxSource || health?.mempool_status || health?.mempool_source || 'not connected';
+  const botStatus = live.botStatus || {};
+  const bots = botStatus.bots || {};
+  const running = botStatus.running || {};
+
+  const BotState = ({ mode, entry, isRunning }) => {
+    const armed = Boolean(entry && entry.enabled);
+    const color = isRunning ? '#fbbf24' : armed ? '#34d399' : '#f87171';
+    const label = isRunning ? 'RUNNING' : armed ? 'ARMED' : 'DISARMED';
+    return (
+      <div style={{ ...styles.panelCard, flex: 1 }}>
+        <div style={{ ...styles.panelTitle, color }}>
+          {mode === 'offense' ? '⚔ OFFENSE' : '🛡 DEFENSE'} · <span style={{ letterSpacing: '1px' }}>{label}</span>
+        </div>
+        <div style={styles.infoLine}>
+          Focus: <b style={{ color: 'var(--neon-cyan)' }}>{entry?.focus || 'auto'}</b><br />
+          Armed by: {entry?.armed_by || '—'}<br />
+          Armed at: {entry?.armed_at ? new Date(entry.armed_at * 1000).toLocaleTimeString() : '—'}<br />
+          Running: {String(isRunning).toUpperCase()}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={styles.container}>
@@ -219,6 +241,11 @@ export default function BotOpsView({ data }) {
         <KPICard label="Max Slippage" value={`${fairPolicy.max_slippage_bps ?? 50} bps`} color="var(--neon-gold)" />
         <KPICard label="Mempool Source" value={String(src).toUpperCase()} color="var(--neon-purple)" />
         <KPICard label="Buffer TX" value={txs.length} trend="" color="var(--text-secondary)" />
+      </div>
+
+      <div style={styles.grid2}>
+        <BotState mode="offense" entry={bots.offense} isRunning={running.offense} />
+        <BotState mode="defense" entry={bots.defense} isRunning={running.defense} />
       </div>
 
       <div style={styles.grid2}>

@@ -277,6 +277,12 @@ export function useLiveData() {
     anomaly_details: {},
     timestamp: null,
   });
+  const [botStatus, setBotStatus] = useState({
+    bots: { offense: null, defense: null },
+    mempool: 'unknown',
+    running: { offense: false, defense: false },
+    trigger: 'ws-only',
+  });
 
   const wsRef = useRef(null);
   const lastTxRef = useRef(null);
@@ -325,6 +331,8 @@ export function useLiveData() {
           if (data.type === 'welcome' || data.type === 'connected') {
             console.log('[LiveData] WS welcome received — connection confirmed');
             setIsLive(true);
+          } else if (data.type === 'bot_status') {
+            setBotStatus(data.bots || data);
           } else if (data.type === 'dashboard_update' || data.type === 'snapshot') {
             handleDashboardUpdate(data);
           } else if (data.type === 'tx' || data.type === 'transaction' || data.transaction || data.tx) {
@@ -641,6 +649,21 @@ export function useLiveData() {
     return () => clearTimeout(t2);
   }, [addTerminalLog]);
 
+  // ── Bot status: WS bot_status events + HTTP polling fallback ──
+  useEffect(() => {
+    const poll = () => {
+      fetch('/bot/status')
+        .then(r => (r.ok ? r.json() : null))
+        .then(body => {
+          if (body) setBotStatus(body);
+        })
+        .catch(() => {});
+    };
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
   return {
     transactions,
     globeData,
@@ -652,5 +675,6 @@ export function useLiveData() {
     metrics,
     terminalLogs,
     isLive,
+    botStatus,
   };
 }
