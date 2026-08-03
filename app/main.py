@@ -14,6 +14,7 @@ from web3 import Web3
 from typing import Dict, Any, Literal, Optional
 import logging
 import time
+import asyncio
 from prometheus_client import Counter, Histogram, make_asgi_app
 
 from app.core.config import settings
@@ -49,8 +50,9 @@ app = FastAPI(
 from app.core.tls import require_tls_or_fail
 
 @app.on_event("startup")
-def _fail_closed_tls_check() -> None:
+async def _startup() -> None:
     require_tls_or_fail(settings)
+    asyncio.create_task(_ensure_shared_mempool())
 
 # Security middleware - enterprise
 # In dev/test, allow testserver and localhost for E2E tests
