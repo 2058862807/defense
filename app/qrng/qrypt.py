@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 
 class QryptQRNG(QRNGProvider):
     def __init__(self, api_token: Optional[str] = None, endpoint: str = "https://api-eus.qrypt.com"):
-        self.api_token = api_token or os.getenv("QRYPT_API_TOKEN") or os.getenv("QRYPT_TOKEN")
+        from app.core.pilot_secrets import pilot_secrets
+        self.api_token = api_token or pilot_secrets.get("qrypt_api_token") or os.getenv("QRYPT_TOKEN")
         self.endpoint = endpoint.rstrip("/")
         self.api_url = f"{self.endpoint}/api/v1/quantum-entropy"
 

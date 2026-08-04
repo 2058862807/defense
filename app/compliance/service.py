@@ -21,12 +21,13 @@ class ComplianceService:
 
     def check_address(self, address: Optional[str] = None, name: Optional[str] = None, country: Optional[str] = None) -> Dict[str, Any]:
         """
-        Enterprise compliance check - OFAC SDN + FATF high-risk
+        Enterprise compliance check - OFAC SDN + FATF high-risk + address risk.
         - Checks name against OFAC SDN live feed
         - Checks country against FATF grey/black live feed
+        - Crypto addresses screened via Chainalysis/TRM when tokens are
+          configured (pilot store); otherwise the analytics result reports
+          configured=False and never downgrades an OFAC/FATF block.
         - Returns combined risk assessment
-
-        For crypto: also would integrate Chainalysis for address screening
         """
         result = {
             "checked_at": datetime.utcnow().isoformat(),
@@ -35,6 +36,7 @@ class ComplianceService:
             "country": country,
             "ofac": None,
             "fatf": None,
+            "analytics": None,
             "overall_risk": "low",
             "blocked": False,
             "reasons": []
@@ -71,6 +73,27 @@ class ComplianceService:
             except Exception as e:
                 logger.error(f"FATF check failed: {e}")
                 result["fatf"] = {"error": str(e), "high_risk": False}
+
+        # Chainalysis / TRM address-risk analytics (neutral when unconfigured -
+        # never downgrades an OFAC/FATF block above).
+        if address:
+            try:
+                from .address_risk import address_risk_engine
+                screening = address_risk_engine.screen_transaction(
+                    address,
+                    jurisdiction=country,
+                    amount=None,
+                )
+                result["analytics"] = screening
+                if screening.get("decision") == "block" and not result.get("blocked"):
+                    result["blocked"] = True
+                    result["overall_risk"] = "high"
+                for r in screening.get("reasons", []):
+                    if r not in result["reasons"]:
+                        result["reasons"].append(r)
+            except Exception as e:
+                logger.error(f"Address-risk screening failed: {e}")
+                result["analytics"] = {"error": str(e), "configured": False}
 
         # Determine final blocked status per government policy
         # OFAC sanctioned => always blocked

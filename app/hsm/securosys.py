@@ -22,7 +22,8 @@ class SecurosysHSM(HSMProvider):
                  auth_token: Optional[str] = None,
                  key_label: Optional[str] = None):
         self.api_url = api_url or os.getenv("SECUROSYS_API_URL", "https://us.securosys.cloud/api/v1")
-        self.auth_token = auth_token or os.getenv("SECUROSYS_AUTH_TOKEN")
+        from app.core.pilot_secrets import pilot_secrets
+        self.auth_token = auth_token or pilot_secrets.get("securosys_auth_token") or os.getenv("SECUROSYS_AUTH_TOKEN")
         self.key_label = key_label or os.getenv("SECUROSYS_KEY_LABEL", "protean-hsm-key")
 
     def get_provider_name(self) -> str:

@@ -117,6 +117,15 @@ class HSMService:
         if not self.providers:
             logger.warning("No cloud HSM providers configured - will use software fallback (Vault Transit or eth_account)")
 
+    def refresh(self):
+        """Re-initialize providers from current credentials (pilot store / env).
+
+        Called after a credential change so newly entered tokens apply without
+        a restart. Fail-open: a provider init error only drops that provider.
+        """
+        self.providers = []
+        self._init_providers()
+
     def sign(self, key_id: str, data: bytes, use_hsm: bool = True) -> bytes:
         """Sign data - tries cloud HSM first, fallback to software"""
         if not use_hsm:

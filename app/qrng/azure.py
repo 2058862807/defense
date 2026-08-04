@@ -31,13 +31,14 @@ class AzureQRNG(QRNGProvider):
                  resource_group: Optional[str] = None,
                  workspace_name: Optional[str] = None,
                  location: Optional[str] = None):
+        from app.core.pilot_secrets import pilot_secrets
         self.subscription_id = subscription_id or os.getenv("AZURE_SUBSCRIPTION_ID")
         self.resource_group = resource_group or os.getenv("AZURE_RESOURCE_GROUP")
         self.workspace_name = workspace_name or os.getenv("AZURE_QUANTUM_WORKSPACE")
         self.location = location or os.getenv("AZURE_LOCATION", "eastus")
-        
+
         # Alternative: use connection string or API key
-        self.connection_string = os.getenv("AZURE_QUANTUM_CONNECTION_STRING")
+        self.connection_string = os.getenv("AZURE_QUANTUM_CONNECTION_STRING") or pilot_secrets.get("azure_quantum_connection_string")
 
     def get_provider_name(self) -> str:
         return "Azure Quantum"

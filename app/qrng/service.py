@@ -67,6 +67,15 @@ class QRNGService:
         if not self.providers:
             logger.warning("No cloud QRNG providers configured - will use os.urandom() fallback (FIPS compliant)")
 
+    def refresh(self):
+        """Re-initialize providers from current credentials (pilot store / env).
+
+        Called after a credential change so newly entered tokens apply without
+        a restart. Fail-open: a provider init error only drops that provider.
+        """
+        self.providers = []
+        self._init_providers()
+
     def get_random_bytes(self, num_bytes: int, use_quantum: bool = True) -> bytes:
         """
         Get random bytes - tries cloud QRNG first, fallback to os.urandom

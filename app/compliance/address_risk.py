@@ -44,7 +44,13 @@ class AnalyticsProvider(ABC):
     def __init__(self, api_token: Optional[str] = None, timeout: float = 10.0):
         self.api_token = api_token
         self.timeout = timeout
-        self.configured = bool(api_token)
+        self._configured = bool(api_token)
+
+    @property
+    def configured(self) -> bool:
+        """Whether an API token is available. Overridden by providers that
+        resolve their token lazily from the pilot credential store."""
+        return self._configured
 
     def screen_address(self, address: str) -> Dict[str, Any]:
         """Return a risk assessment for an address. Not-configured providers
@@ -63,23 +69,96 @@ class AnalyticsProvider(ABC):
 
 
 class ChainalysisSanctionsProvider(AnalyticsProvider):
-    """Chainalysis Sanctions API stub. Real impl would call
-    https://api.chainalysis.com/api/sanctions/v2/address/{address}."""
+    """Chainalysis Sanctions API - real REST integration.
+
+    GET https://api.chainalysis.com/api/sanctions/v2/address/{address}
+    Auth: `Token {token}` header (Chainalysis uses Token, not Bearer).
+    Sanctions hits are high risk (>= block threshold territory); the engine's
+    fail-closed shadow/OFAC path still governs blocks, so an API outage here
+    degrades to neutral risk + error, never a silent downgrade of a block.
+    """
 
     name = "chainalysis"
+    endpoint = "https://api.chainalysis.com/api/sanctions/v2/address"
+
+    def _token(self) -> Optional[str]:
+        from app.core.pilot_secrets import pilot_secrets
+        return self.api_token or pilot_secrets.get("chainalysis_api_token")
+
+    @property
+    def configured(self) -> bool:
+        return bool(self._token())
 
     def _screen(self, address: str) -> Dict[str, Any]:
-        raise NotImplementedError("Chainalysis API integration pending operator credentials")
+        token = self._token()
+        if not token:
+            return {"provider": self.name, "configured": False, "risk_score": 0.0, "hits": [], "error": "no token"}
+        try:
+            import httpx
+            resp = httpx.get(
+                f"{self.endpoint}/{address}",
+                headers={"Token": token, "Accept": "application/json"},
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            sanctions = data.get("sanctions") or []
+            hits = [
+                {"address": address, "category": s.get("category"), "description": s.get("description"),
+                 "sanction": s.get("sanction"), "sub_category": s.get("sub_category")}
+                for s in sanctions
+            ]
+            risk = 100.0 if sanctions else 0.0
+            return {"provider": self.name, "configured": True, "risk_score": risk, "hits": hits, "error": None}
+        except Exception as e:
+            logger.error(f"Chainalysis screening failed for {address[:10]}...: {e}")
+            return {"provider": self.name, "configured": True, "risk_score": 0.0, "hits": [], "error": str(e)[:300]}
 
 
 class TrmRiskScreeningProvider(AnalyticsProvider):
-    """TRM Labs Screen API stub. Real impl would call
-    https://api.trmlabs.com/api/v1/screen/address with a bearer token."""
+    """TRM Labs Screen API - real REST integration.
+
+    POST https://api.trmlabs.com/api/v1/screen/address
+    Auth: `Authorization: Bearer {token}`. Returns totalRiskScore (0-100) plus
+    address risk indicators. Neutral on failure (never downgrades a block).
+    """
 
     name = "trm"
+    endpoint = "https://api.trmlabs.com/api/v1/screen/address"
+
+    def _token(self) -> Optional[str]:
+        from app.core.pilot_secrets import pilot_secrets
+        return self.api_token or pilot_secrets.get("trm_api_token")
+
+    @property
+    def configured(self) -> bool:
+        return bool(self._token())
 
     def _screen(self, address: str) -> Dict[str, Any]:
-        raise NotImplementedError("TRM API integration pending operator credentials")
+        token = self._token()
+        if not token:
+            return {"provider": self.name, "configured": False, "risk_score": 0.0, "hits": [], "error": "no token"}
+        try:
+            import httpx
+            resp = httpx.post(
+                self.endpoint,
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                json={"address": address, "chain": "ethereum"},
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            indicators = data.get("addressRiskIndicators") or []
+            hits = [
+                {"address": address, "category": i.get("category"), "risk": i.get("risk"),
+                 "riskScore": i.get("riskScore"), "categoryRiskScoreLevel": i.get("categoryRiskScoreLevel")}
+                for i in indicators
+            ]
+            risk = float(data.get("totalRiskScore", 0.0))
+            return {"provider": self.name, "configured": True, "risk_score": risk, "hits": hits, "error": None}
+        except Exception as e:
+            logger.error(f"TRM screening failed for {address[:10]}...: {e}")
+            return {"provider": self.name, "configured": True, "risk_score": 0.0, "hits": [], "error": str(e)[:300]}
 
 
 class AddressRiskEngine:
@@ -116,6 +195,13 @@ class AddressRiskEngine:
         if hasattr(val, "get_secret_value"):
             return val.get_secret_value()
         return val
+
+    def status(self) -> List[Dict[str, Any]]:
+        """Per-provider configuration status for the pilot readiness surface."""
+        return [
+            {"provider": p.name, "configured": bool(getattr(p, "configured", False))}
+            for p in self.providers
+        ]
 
     def load_shadow(self, force: bool = False) -> Dict[str, Any]:
         """Load the operator-maintained shadow sanctions set. Missing file is not

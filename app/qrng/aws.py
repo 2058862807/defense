@@ -26,13 +26,12 @@ class AWSQRNG(QRNGProvider):
                  aws_secret_key: Optional[str] = None,
                  region: Optional[str] = None,
                  device_arn: Optional[str] = None):
-        self.aws_access_key = aws_access_key or os.getenv("AWS_ACCESS_KEY_ID")
-        self.aws_secret_key = aws_secret_key or os.getenv("AWS_SECRET_ACCESS_KEY")
+        from app.core.pilot_secrets import pilot_secrets
+        self.aws_access_key = aws_access_key or pilot_secrets.get("aws_access_key_id") or os.getenv("AWS_ACCESS_KEY_ID")
+        self.aws_secret_key = aws_secret_key or pilot_secrets.get("aws_secret_access_key") or os.getenv("AWS_SECRET_ACCESS_KEY")
         self.region = region or os.getenv("AWS_REGION", "us-east-1")
         self.device_arn = device_arn or os.getenv("AWS_BRAKET_DEVICE_ARN", "arn:aws:braket:::device/qpu/ionq/Aria-1")
-        
-        # Alternative: Qrypt via AWS Marketplace
-        self.qrypt_via_aws = os.getenv("QRYPT_AWS_MARKETPLACE_TOKEN")
+        self.qrypt_via_aws = pilot_secrets.get("qrypt_aws_marketplace_token") or os.getenv("QRYPT_AWS_MARKETPLACE_TOKEN")
 
     def get_provider_name(self) -> str:
         return "AWS Braket"

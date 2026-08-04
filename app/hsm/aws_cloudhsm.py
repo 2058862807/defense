@@ -31,7 +31,8 @@ class AWSCloudHSM(HSMProvider):
         self.cluster_id = cluster_id or os.getenv("AWS_CLOUDHSM_CLUSTER_ID")
         self.region = region or os.getenv("AWS_REGION", "us-east-1")
         self.hsm_user = hsm_user or os.getenv("AWS_CLOUDHSM_USER", "crypto_user")
-        self.hsm_password = hsm_password or os.getenv("AWS_CLOUDHSM_PASSWORD")
+        from app.core.pilot_secrets import pilot_secrets
+        self.hsm_password = hsm_password or pilot_secrets.get("aws_cloudhsm_password") or os.getenv("AWS_CLOUDHSM_PASSWORD")
         
         # Alternative: Use AWS KMS with CloudHSM backing
         self.kms_key_id = os.getenv("AWS_KMS_KEY_ID")

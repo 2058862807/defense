@@ -36,6 +36,7 @@ class FlashbotsClientEnterprise:
         self.auth_account: Optional[Account] = None
         self.w3 = None
         self.flashbots_provider = None
+        self._auth_attempted = False
         self._load_auth_signer()
 
     def _resolve_relay_url(self) -> str:
@@ -45,7 +46,7 @@ class FlashbotsClientEnterprise:
         return settings.flashbots_relay_url
 
     def _load_auth_signer(self):
-        """Load Flashbots auth signer from Vault (or local encrypted store in dev)"""
+        """Load Flashbots auth signer from Vault / local store / pilot store."""
         try:
             from app.core.secrets_store import resolve_secret
             secret = resolve_secret(
@@ -54,11 +55,14 @@ class FlashbotsClientEnterprise:
                 settings.vault_role_id,
                 settings.vault_secret_id.get_secret_value(),
             )
-            if not secret:
-                raise ValueError("Flashbots signing key not found (Vault or local store)")
-            signing_key = secret.get("signing_key") or secret.get("flashbots_signing_key")
+            signing_key = None
+            if secret:
+                signing_key = secret.get("signing_key") or secret.get("flashbots_signing_key")
             if not signing_key:
-                raise ValueError("Flashbots signing key not in secret")
+                from app.core.pilot_secrets import pilot_secrets
+                signing_key = pilot_secrets.get("flashbots_signing_key")
+            if not signing_key:
+                raise ValueError("Flashbots signing key not found (Vault, local store, or pilot credentials)")
             if not signing_key.startswith("0x"):
                 signing_key = "0x" + signing_key
             self.auth_account = Account.from_key(signing_key)
@@ -71,6 +75,16 @@ class FlashbotsClientEnterprise:
                 raise
             logger.warning(f"Flashbots auth not loaded (chain {settings.evm_chain_id}, direct-send path): {e}")
 
+    def _ensure_auth(self):
+        """Live-refresh the auth signer: retry load once per new credential set.
+
+        Enables creds entered via the pilot API to apply to already-constructed
+        client instances without a restart.
+        """
+        if self.auth_account is None and not self._auth_attempted:
+            self._auth_attempted = True
+            self._load_auth_signer()
+
     def _get_web3_with_flashbots(self, rpc_url: str):
         """Create Web3 with Flashbots middleware"""
         w3 = Web3(Web3.HTTPProvider(rpc_url))
@@ -79,6 +93,7 @@ class FlashbotsClientEnterprise:
         return w3
 
     def _sign_request(self, payload: str) -> str:
+        self._ensure_auth()
         if not self.auth_account:
             if settings.is_production():
                 raise ValueError("Flashbots auth signer required in production")
@@ -98,6 +113,7 @@ class FlashbotsClientEnterprise:
         if not bundle:
             raise ValueError("Empty bundle")
 
+        self._ensure_auth()
         # Validate bundle: each tx must be signed raw or have from/value etc.
         for idx, tx in enumerate(bundle):
             if "signed_transaction" not in tx and "signed_tx" not in tx and "raw" not in tx:

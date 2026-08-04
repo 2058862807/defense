@@ -74,8 +74,10 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 app.include_router(regulatory_router)
 from app.metering.router import router as metering_router
 from app.api_v1 import router as api_v1_router
+from app.core.pilot_router import router as pilot_router
 app.include_router(metering_router)
 app.include_router(api_v1_router)
+app.include_router(pilot_router)
 
 # Enterprise services - fail closed if model/prover not available
 scorer = ProteanScorerEnterprise()

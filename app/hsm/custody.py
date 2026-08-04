@@ -367,6 +367,17 @@ def build_signing_backend() -> Tuple[SigningBackend, str]:
                 CustodySource.SOFTWARE_VAULT.value,
             )
 
+    # 3b. Pilot-store key - entered at runtime via the admin API so an operator
+    #     can supply the gas wallet without a container restart.
+    from app.core.pilot_secrets import pilot_secrets
+
+    pilot_key = pilot_secrets.get("evm_private_key")
+    if pilot_key:
+        return (
+            SoftwareSigningBackend(pilot_key, CustodySource.SOFTWARE_ENV),
+            CustodySource.SOFTWARE_ENV.value,
+        )
+
     # 4. Environment key - explicitly software custody. Preserves current
     #    operational behavior (signing works today via env key) but is audited
     #    loudly so production operators see that custody is software until A1
