@@ -80,7 +80,33 @@ sha256sum build/*.wasm build/*.zkey > circuit.hash
 - **Metrics:** Prometheus `Counter`/`Histogram` with `/metrics` protected by mTLS
 - **Policy:** OPA compatible fairness policy versioned `1.2.0`, stored as string `min_user_balance_for_sandwich_wei` to avoid float precision, governance via Postgres
 
-## 8. Supply Chain - SLSA L3
+## 8. Metered Licensing Audit (AU-11 / CM-9)
+
+Token consumption is a financial record, so it is auditable end-to-end:
+
+- **Ledger:** every settled analysis appends a `METERED_TX_ANALYZED` /
+  `METERED_PERIOD_AUDIT` entry to the SHA-256 hash-chained ledger
+  (`ledger.py`), so consumption can be re-derived and the chain verified
+  (`/ledger/verify`).
+- **Commitment:** each audit period produces a deterministic SHA-256 commitment
+  over canonical usage + grant balances (`period_commitment`).
+- **On-chain anchor (optional):** with `METERING_USAGE_REGISTRY_ADDRESS` set,
+  the period commitment is submitted to the owner-only Polygon `UsageAudit`
+  registry (`recordPeriod`, event `PeriodAnchored`) for an immutable,
+  publicly-verifiable record.
+- **Webhook delivery:** deliveries are persisted per attempt with status and
+  error; receipts carry `X-Protean-Delivery` for replay/audit matching.
+- **Legacy licensing migrated:** the demo-era in-memory license/API-key/usage
+  stores (`app/licensing/*`, `app/connectors/usage.py`, `TIER_LIMITS`) are
+  retired. Signed ECDSA P-256 license files now mint idempotent fixed-token
+  metering grants (`app/metering/migrate.py`); the enterprise connector bills
+  per call via the same atomic reserve/settle path as `/v1`, so connector and
+  API consumption land in one auditable ledger.
+- **Fail-closed defaults:** unknown/revoked key -> 403, exhausted/expired ->
+  402 with a license offer; pilot consumption never blocks the hash-chained
+  ledger or webhook audit trail.
+
+## 10. Supply Chain - SLSA L3
 
 - **Pinning:** `requirements.enterprise.txt` exact `==` with hashes via `pip-compile --generate-hashes`, `--require-hashes` enforced in Dockerfile
 - **Scanning:** `pip-audit --strict` in CI fails build, `cyclonedx-py` SBOM as artifact
@@ -88,7 +114,7 @@ sha256sum build/*.wasm build/*.zkey > circuit.hash
 - **Provenance:** Model commitment signature via cosign, circuit hash via SLSA
 - **Confusion:** `uv` first-match index strategy or single PyPI index, no `--extra-index-url`
 
-## 9. Deployment - FedRAMP High
+## 11. Deployment - FedRAMP High
 
 - **Secrets:** Vault Agent injects certs to `/certs/tls.crt`, `/certs/ca.crt`, `/certs/kafka-ca.crt`, no `.env` secrets in prod
 - **mTLS:** `enable_mtls=True`, `httpx.Client(cert=..., verify=...)` for prover, relay, regulatory API, Kafka `SSL`/`SASL_SSL` SCRAM-SHA-512
@@ -96,12 +122,12 @@ sha256sum build/*.wasm build/*.zkey > circuit.hash
 - **Docker:** Distroless final stage, non-root `user 1001`, healthcheck `curl /health`, read-only rootfs
 - **K8s:** PodSecurity `restricted`, seccomp, no privilege escalation
 
-## 10. Offense/Defense Governance
+## 12. Offense/Defense Governance
 
 - **Offense:** Audited searcher - must prove fairness, `FairnessRegistry` reverts if `isFair=false` for offense in `submitFairnessProof`. `OFFENSE_BLOCKED_ONCHAIN` audit event.
 - **Defense:** Private mempool only for high risk, never frontruns user, `isFair` always true for defense, but proof still required. No sandwich.
 
-## 11. Test Vectors (Government)
+## 13. Test Vectors (Government)
 
 Circom, Gnark, Python must agree:
 

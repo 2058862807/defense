@@ -119,6 +119,84 @@ bash start.sh both  # Now real liboqs build, real model training from curated hi
 - `/regulatory/feedback` - JWT-protected, verifies ZK proof via real `snarkjs groth16 verify`, logs for compliance
 - `/regulatory/policy` - returns current fairness policy v1.2.0
 
+## Metered Token Licensing (C1 - product protection)
+
+Every external transaction analysis is **metered**: 1 token = 1 full analysis
+(score + SHAP + real Groth16 ZK proof + OFAC/FATF screening). Pilot customers
+receive a **fixed token pool valid 6 months** (no monthly rollover). When the
+pool is exhausted or the grant expires, every paid call returns **HTTP 402
+Payment Required with a license offer** in the body; the customer purchases a
+license (payment webhook) to top up / convert, or the pilot lapses.
+
+- `POST /metering/customers` - register a pilot customer (admin)
+- `POST /metering/grants` - issue a fixed-pool 6-month pilot grant (admin)
+- `POST /metering/grants/{id}/purchase` - create a purchase token + offer
+- `POST /metering/payments/webhook` - payment confirmation (signed webhook)
+- `POST /metering/api-keys` - create `X-API-Key` bound to a grant (admin)
+- `GET /metering/grants` + `GET /metering/grants/{id}` - grants + balances
+- `GET /metering/usage` - per-grant usage records (ledger-hash-linked)
+- `POST /metering/audit/anchor` - anchor the period commitment (on-chain optional)
+- `GET /metering/audit/commitment` - current period commitment (read-only)
+
+Token lifecycle per call is atomic: `authorize` (reserve) -> analyze -> `settle`;
+any failure releases the reservation so the pilot only pays for completed
+analyses. Usage is recorded in the durable hash-chained ledger (`ledger.db`) and
+mirrored fail-soft to Postgres; when `METERING_USAGE_REGISTRY_ADDRESS` is set,
+each period's SHA-256 commitment is submitted to the Polygon `UsageAudit`
+registry (`contracts/UsageAudit.sol`).
+
+## Universal Integration Surface (C2)
+
+External institutions integrate through the `/v1` metered REST API (API key +
+webhooks) or native protocol adapters:
+
+- `POST /v1/transactions/analyze` - full metered analysis (1 token)
+- `POST /v1/compliance/check` - OFAC/FATF party screening (1 token)
+- `POST /v1/entitlement` - balance / expiry / license offer (0 tokens)
+- `POST /v1/webhooks/register` - subscribe to signed decision delivery
+- `POST /v1/integrations/iso20022/analyze` - `pacs.008` / `pain.001` /
+  `camt.052` / `camt.053` XML in, ISO-style verdict out
+- `POST /v1/integrations/fix/analyze` - FIX 4.4 order message in, `35=8`
+  execution notice out (checksum-validated)
+- `POST /v1/integrations/core-banking/{provider}/analyze` - Mambu, Thought
+  Machine Vault, Temenos T24, Jack Henry Symitar payloads normalized to the
+  universal request, verdicts mapped back to vendor conventions
+
+Webhook delivery is HMAC-SHA256 signed (`X-Protean-Signature: sha256=<hex>`,
+`X-Protean-Event`, `X-Protean-Delivery`, `X-Protean-Timestamp`), retried with
+backoff (3 attempts), and persisted for audit. Verified clients:
+
+- **Python SDK** - `sdk/python/protean_metered/` (`ProteanClient`,
+  `verify_webhook_signature`, `EntitlementExhausted` with the license offer)
+- **Node SDK** - `sdk/node/protean.mjs` (`ProteanClient`,
+  `verifyWebhookSignature`, `verifyWebhookRequest`)
+
+Events also stream to Kafka (`kafka_topic_risk`) when a broker is configured,
+with a SHA-256 payload fingerprint for audit cross-checking.
+
+## Legacy Licensing Migration (demo-era -> metering store)
+
+The demo-era in-memory licensing stack (`app/licensing/`, `app/connectors/usage.py`,
+`TIER_LIMITS`) has been retired in favor of the durable metering ledger. The
+enterprise connector, licensing server, and K8s operator still work unchanged:
+
+- **Signed license files** (`app/licensing/verifier.py`) remain the ECDSA P-256
+  crypto artifact. On issue/renew, `app/metering/migrate.ensure_grant_for_license`
+  mints the matching **fixed-token metering grant**, keyed idempotently by
+  `license_id` (stored in the grant's `purchase_order` column). Pool =
+  `defense.max_protected_txs_per_day` x remaining term.
+- **Enterprise connector** (`/v1/protect`, `/v1/mev/opportunity`) now uses a
+  metered dependency: `X-API-Key` -> metering grant -> feature check -> atomic
+  1-token reservation, settled on success / released on failure. Exhausted or
+  unlicensed keys fail closed with 402 (same `EntitlementError` mapping as `/v1`).
+- **Licensing server** (`/api-keys/*`, `/usage/*`) delegates to the metering
+  store (`pk_live_...` keys, zero-token audit events for usage records).
+- **K8s operator** hourly license check still resolves `LicenseVerifier`
+  (unchanged); the connector now gates on tokens rather than the license file.
+- **In-memory dicts retired**: `licenses_db`/`api_keys_db`/`usage_db` (server),
+  `usage_db`/`usage_counters`/`TIER_LIMITS` (usage.py) removed. Tier limits are
+  replaced by grant token pools.
+
 ## Frontend
 
 - **Location:** `frontend/` + `src/` at root (restored from b5afc10 initial commit, lost during enterprise rebase, now restored)

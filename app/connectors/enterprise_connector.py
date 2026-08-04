@@ -15,30 +15,48 @@ from concurrent import futures
 from app.core.config import settings
 from app.core.logging import audit_log
 from app.core.security import verify_jwt_gov
-from app.licensing.verifier import LicenseVerifier, LicenseError
+from app.licensing.verifier import LicenseVerifier
+from app.metering.store import EntitlementError
+from app.metering.migrate import get_connector_qps, metered_authorize
 from app.streaming.kafka import KafkaBusEnterprise
 
 logger = logging.getLogger(__name__)
 
-# License verifier singleton
-license_verifier = LicenseVerifier()
 
 def verify_license_feature(feature: str):
-    """Dependency that checks license for feature - offense/defense/connector_qps"""
-    def _verify():
+    """Dependency: X-API-Key -> metering grant -> feature check -> reserve token.
+
+    The token is reserved atomically here and settled by the endpoint on
+    success (released on failure). Fail-closed: unknown/expired/exhausted keys
+    map to 401/402/403 via the typed EntitlementError.
+    """
+    def _verify(x_api_key: str = Header(...)):
         try:
-            valid, info = license_verifier.verify()
-            if not valid:
-                raise LicenseError(f"License invalid: {info}")
-            # Check feature flag
-            features = info.get('features', {})
-            if feature not in features or not features[feature].get('enabled', False):
-                raise LicenseError(f"Feature {feature} not licensed")
-            return info
-        except LicenseError as e:
+            return metered_authorize(
+                x_api_key, endpoint=f"/connector/{feature}", feature=feature, cost=1
+            )
+        except EntitlementError as e:
             audit_log("LICENSE_CHECK_FAILED", "connector", f"check_{feature}", "license", "FAILURE", {"error": str(e)})
-            raise HTTPException(status_code=402, detail=f"License check failed for {feature}: {e}")
+            raise HTTPException(status_code=e.http_status, detail=f"License check failed for {feature}: {e}")
     return _verify
+
+
+def _settle(metered: dict, decision: str, tx_hash: Optional[str] = None):
+    from app.metering.store import metering_store
+    metering_store.settle_reservation(
+        metered["reservation_id"],
+        event_type="connector_analysis",
+        decision=decision,
+        tx_hash=tx_hash,
+    )
+
+
+def _release(metered: dict):
+    from app.metering.store import metering_store
+    try:
+        metering_store.release_reservation(metered["reservation_id"])
+    except Exception as e:
+        logger.warning(f"Release reservation failed: {e}")
 
 # FastAPI app for REST connector
 connector_app = FastAPI(
@@ -76,12 +94,11 @@ class MEVOpportunityResponse(BaseModel):
 
 @connector_app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    # Enterprise rate limiting via Redis - check license QPS
-    from app.licensing.verifier import get_license_qps
+    # Enforcement is per-request via the metered token reservation; QPS here is
+    # informational (would drive a Redis INCR + TTL bucket in prod).
     try:
-        qps = get_license_qps()
-        # Real implementation would use redis INCR with TTL
-        # For gov, fail closed if Redis down and QPS enforcement required
+        qps = get_connector_qps()
+        request.state.qps = qps
     except Exception as e:
         logger.warning(f"Rate limit check failed: {e}")
     response = await call_next(request)
@@ -108,11 +125,11 @@ def get_current_user_connector(authorization: str = Header(...), x_api_key: str 
     except Exception as e:
         raise HTTPException(401, f"Auth failed: {e}")
 
-@connector_app.post("/v1/protect", response_model=ProtectResponse, dependencies=[Depends(verify_license_feature("defense"))])
-async def protect_transaction(req: ProtectRequest, user=Depends(get_current_user_connector)):
+@connector_app.post("/v1/protect", response_model=ProtectResponse)
+async def protect_transaction(req: ProtectRequest, user=Depends(get_current_user_connector), metered=Depends(verify_license_feature("defense"))):
     """
     Enterprise endpoint: submit signed transaction for private mempool protection
-    - Verifies license defense enabled
+    - Verifies metered defense entitlement (1 token reserved)
     - Scores risk via real ML model + SHAP + ZK proof
     - Routes via private relay if high risk
     - Returns bundle hash and on-chain proof
@@ -131,6 +148,7 @@ async def protect_transaction(req: ProtectRequest, user=Depends(get_current_user
         from eth_account import Account
         sender = Account.recover_transaction(req.signed_transaction)
     except Exception as e:
+        _release(metered)
         raise HTTPException(400, f"Invalid signed transaction: {e}")
 
     # Build tx dict for scoring
@@ -150,6 +168,7 @@ async def protect_transaction(req: ProtectRequest, user=Depends(get_current_user
 
         # Real scoring
         result = await bot.protect_transaction(parsed)
+        _settle(metered, decision=result["status"], tx_hash=parsed["hash"])
 
         audit_log(
             event_type="CONNECTOR_PROTECT_REQUEST",
@@ -160,7 +179,8 @@ async def protect_transaction(req: ProtectRequest, user=Depends(get_current_user
             metadata={
                 "user_id": req.user_id,
                 "risk_score": result.get("zk_package", {}).get("score", 0),
-                "license_tier": license_verifier.get_tier()
+                "license_tier": metered["tier"],
+                "grant_id": metered["grant_id"]
             }
         )
 
@@ -172,18 +192,19 @@ async def protect_transaction(req: ProtectRequest, user=Depends(get_current_user
             risk_score=zk_package.get("score", 0),
             zk_proof_hash=Web3.keccak(text=str(zk_package.get("zk_proof"))).hex() if zk_package.get("zk_proof") else None,
             onchain_proof=zk_package.get("onchain_hash"),
-            license_tier=license_verifier.get_tier()
+            license_tier=metered["tier"]
         )
 
     except Exception as e:
+        _release(metered)
         logger.error(f"Protect failed: {e}")
         raise HTTPException(500, f"Protection failed: {e}")
 
-@connector_app.post("/v1/mev/opportunity", response_model=MEVOpportunityResponse, dependencies=[Depends(verify_license_feature("offense"))])
-async def submit_mev_opportunity(req: MEVOpportunityRequest, user=Depends(get_current_user_connector)):
+@connector_app.post("/v1/mev/opportunity", response_model=MEVOpportunityResponse)
+async def submit_mev_opportunity(req: MEVOpportunityRequest, user=Depends(get_current_user_connector), metered=Depends(verify_license_feature("offense"))):
     """
     Enterprise endpoint: submit MEV opportunity for certified execution
-    - Verifies offense license
+    - Verifies metered offense entitlement (1 token reserved)
     - Checks fairness via ZK circuit
     - If fair, builds bundle and sends via Flashbots
     """
@@ -205,6 +226,7 @@ async def submit_mev_opportunity(req: MEVOpportunityRequest, user=Depends(get_cu
 
     try:
         result = await bot.process_opportunity(opp)
+        _settle(metered, decision=result["status"])
 
         zk_package = result.get("zk_package", {})
 
@@ -217,7 +239,8 @@ async def submit_mev_opportunity(req: MEVOpportunityRequest, user=Depends(get_cu
             metadata={
                 "profit_eth": req.profit_eth,
                 "is_fair": zk_package.get("fairness", {}).get("is_fair"),
-                "license_tier": license_verifier.get_tier()
+                "license_tier": metered["tier"],
+                "grant_id": metered["grant_id"]
             }
         )
 
@@ -231,6 +254,7 @@ async def submit_mev_opportunity(req: MEVOpportunityRequest, user=Depends(get_cu
         )
 
     except Exception as e:
+        _release(metered)
         logger.error(f"MEV opportunity processing failed: {e}")
         raise HTTPException(500, f"MEV processing failed: {e}")
 

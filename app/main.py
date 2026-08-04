@@ -23,6 +23,8 @@ from app.regulatory.api import router as regulatory_router
 from app.ml.scorer import ProteanScorerEnterprise
 from app.ml.xai import ZKXAICouplerEnterprise
 from app.core.auth_deps import get_current_user, require_role, get_current_user_gov
+from app.metering.deps import optional_metered_key
+from app.metering.store import metering_store
 from app.core.live_store import live_store
 from app.core.ledger import ledger as hash_ledger
 from app.kms.manager import kms_manager
@@ -70,6 +72,10 @@ app.add_middleware(
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
 app.include_router(regulatory_router)
+from app.metering.router import router as metering_router
+from app.api_v1 import router as api_v1_router
+app.include_router(metering_router)
+app.include_router(api_v1_router)
 
 # Enterprise services - fail closed if model/prover not available
 scorer = ProteanScorerEnterprise()
@@ -614,7 +620,7 @@ def _signer_custody_report() -> dict:
         return {"status": "error", "detail": str(e)}
 
 @app.post("/analyze", response_model=AnalyzeResponseEnterprise)
-async def analyze(request: AnalyzeRequestEnterprise, background_tasks: BackgroundTasks, user=Depends(get_current_user_gov)):
+async def analyze(request: AnalyzeRequestEnterprise, background_tasks: BackgroundTasks, user=Depends(get_current_user_gov), metered_key=Depends(optional_metered_key(1))):
     tx_data = request.model_dump()
 
     # 1. Enterprise scoring + real SHAP + real ZK proof (fail closed)
@@ -623,6 +629,8 @@ async def analyze(request: AnalyzeRequestEnterprise, background_tasks: Backgroun
         MEV_RISK_HIST.observe(zk_package["score"])
         ZK_PROOF_COUNTER.labels(status=zk_package["zk_status"], type=request.mode).inc()
     except Exception as e:
+        if metered_key:
+            metering_store.release_reservation(metered_key.reservation["reservation_id"])
         logger.error(f"ZK XAI proof generation failed: {e}")
         audit_log("ZK_PROOF_FAILURE", user.get("sub","unknown"), "analyze", "/analyze", "FAILURE", {"error": str(e), "tx_hash": request.tx_hash})
         raise HTTPException(status_code=500, detail=f"ZK proof generation failed - fail closed: {e}")
@@ -638,6 +646,27 @@ async def analyze(request: AnalyzeRequestEnterprise, background_tasks: Backgroun
             action = "EXECUTE_BUNDLE" if zk_package["score"] > 0.6 else "BLOCK_UNFAIR"
     else:
         action = "PROTECT_PRIVATE" if zk_package["score"] > 0.7 else "ALLOW_PUBLIC"
+
+    # 2b. Metered: settle the reservation (tokens consumed) with the chained ledger.
+    if metered_key:
+        try:
+            from app.metering.store import metering_store
+            entry = hash_ledger.append(
+                event_type="METERED_TX_ANALYZED",
+                payload={"grant_id": metered_key.grant_id, "score": zk_package["score"], "action": action},
+                tx_hash=request.tx_hash or None,
+                status=action,
+            )
+            metering_store.settle_reservation(
+                metered_key.reservation["reservation_id"],
+                event_type="tx_analysis",
+                decision=action,
+                score=zk_package["score"],
+                ledger_entry_hash=entry["entry_hash"],
+            )
+        except Exception as e:
+            logger.warning(f"Metering settle failed (tokens released): {e}")
+            metering_store.release_reservation(metered_key.reservation["reservation_id"])
 
     # 3. Background: anchor on-chain proof (enterprise async task with retry and audit)
     def anchor_task():

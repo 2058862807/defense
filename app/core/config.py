@@ -137,6 +137,26 @@ class Settings(BaseSettings):
     otel_endpoint: Optional[str] = None
     # Durable local audit trail (FedRAMP AU-4) - written regardless of SIEM reachability
     audit_log_path: str = "data/audit.jsonl"
+    # --- Metering / token licensing (C1) ---
+    # Durable token ledger (SQLite WAL default; Postgres mirror via postgres_url).
+    metering_db_path: str = "data/metering.db"
+    postgres_usage_table: str = "metering_usage_mirror"
+    # One token = one full transaction analysis (score + SHAP + ZK + compliance).
+    metering_token_cost_analyze: int = 1
+    metering_token_cost_compliance: int = 1
+    # Pilot default: fixed token pool valid for N months from issue.
+    metering_pilot_months: int = 6
+    metering_pilot_token_pool: int = 1_000_000
+    # License purchase (payment seam): webhook secret + URL + list price (USD cents).
+    metering_payment_webhook_secret: Optional[str] = None
+    metering_payment_webhook_url: Optional[str] = None
+    metering_license_price_usd_cents: int = 50_000
+    metering_license_display_currency: str = "USD"
+    # On-chain usage audit (hybrid): set to a deployed UsageAudit registry
+    # address to submit per-period usage commitments to Polygon. When unset the
+    # commitment is still recorded in the hash-chained ledger (tamper-evident).
+    metering_usage_registry_address: Optional[str] = None
+    metering_audit_period_days: int = 1
     # Real regulatory feedback loop (integration): the defense bot POSTs
     # PQC-encrypted ZK XAI packages to the regulatory API over mTLS with a real
     # RS256 JWT; /pqc/pubkey serves the server's persistent ML-KEM public key

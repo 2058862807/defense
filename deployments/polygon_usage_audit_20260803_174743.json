@@ -1,0 +1,89 @@
+{
+  "usage_audit_address": "0x322408b9237573c6D461d6255D34B205A44e7818",
+  "deploy_tx": "0xa4d9dcf368c0876816e79c0e8ea9bca82b92c7fff67b763af9296be27ab7de23",
+  "deployer": "0xf7EB6B9aEDA6bfD232D03a7d682d0e23Cb1b90E7",
+  "chain_id": 137,
+  "block": 91394772,
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "commitment",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint256",
+          "name": "periodStart",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "eventCount",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "tokensConsumed",
+          "type": "uint256"
+        }
+      ],
+      "name": "recordPeriod",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "commitment",
+          "type": "bytes32"
+        }
+      ],
+      "name": "getCommitment",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "bytes32",
+              "name": "commitment",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "uint256",
+              "name": "periodStart",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "eventCount",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "tokensConsumed",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "timestamp",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "recorder",
+              "type": "address"
+            }
+          ],
+          "internalType": "struct UsageAudit.PeriodRecord",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "timestamp": 1785797263.1901636
+}
