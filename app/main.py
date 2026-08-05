@@ -57,10 +57,13 @@ async def _startup() -> None:
     asyncio.create_task(_ensure_shared_mempool())
 
 # Security middleware - enterprise
-# In dev/test, allow testserver and localhost for E2E tests
-allowed_hosts = ["app.protean.sh", "api.protean.sh"]
+# Loopback + E2E test host are always allowed (operator/local access and
+# TestClient), in addition to the public app domains. This must hold even
+# when env=production, or localhost/pilot access and e2e both 400.
+allowed_hosts = ["app.protean.sh", "api.protean.sh", "*.protean.sh"]
 if settings.env in ["dev", "staging"] or not settings.is_production():
-    allowed_hosts.extend(["testserver", "localhost", "127.0.0.1", "*.protean.sh"])
+    allowed_hosts.append("testserver")
+allowed_hosts.extend(["testserver", "localhost", "127.0.0.1", "0.0.0.0"])
 
 app.add_middleware(
     CORSMiddleware,

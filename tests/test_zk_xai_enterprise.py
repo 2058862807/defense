@@ -5,9 +5,18 @@ FIPS 140-3, FIPS 203, NIST SP 800-53
 from app.ml.scorer import ProteanScorerEnterprise
 from app.ml.xai import ZKXAICouplerEnterprise
 from app.zk.fairness_circuit import FairnessCircuitEnterprise
+from app.zk.verifier import ZKVerifierEnterprise
 from app.core.config import settings
 from app.core.security import hybrid_encrypt_gov, ml_kem_keypair, aes_gcm_encrypt_gov, aes_gcm_decrypt_gov
 import hashlib
+
+
+def _assert_proof_verifies(zk):
+    """Real cryptographic check: snarkjs groth16 verify against the committed vkey."""
+    verifier = ZKVerifierEnterprise()
+    ok = verifier.verify_offchain(zk["zk_proof"], zk["zk_public_inputs"], zk["commitments"])
+    assert ok, "Produced proof must pass snarkjs groth16 verify"
+    return ok
 
 def test_offense_blocked_enterprise():
     scorer = ProteanScorerEnterprise()
@@ -19,9 +28,11 @@ def test_offense_blocked_enterprise():
     zk = coupler.generate_zk_proof(tx)
     assert zk["fairness"]["is_fair"] == False
     assert zk["commitments"]["model_commitment"] is not None
-    assert "PROVED" in zk["zk_status"]  # DEV_DETERMINISTIC is ok in dev
+    assert "PROVED" in zk["zk_status"]
     assert zk["provenance"]["fips"] == "140-3"
-    print(f"✓ test_offense_blocked_enterprise: sandwich 0.5 ETH BLOCKED, proof={zk['zk_status']}, model={zk['commitments']['model_commitment'][:16]}...")
+    assert zk["zk_public_inputs"][0] == "0", "isFair public input must be 0 for blocked sandwich"
+    _assert_proof_verifies(zk)
+    print(f"✓ test_offense_blocked_enterprise: sandwich 0.5 ETH BLOCKED, proof={zk['zk_status']} verified, model={zk['commitments']['model_commitment'][:16]}...")
 
 def test_defense_protect_enterprise():
     scorer = ProteanScorerEnterprise()
@@ -39,13 +50,14 @@ def test_defense_protect_enterprise():
     assert zk["zk_proof"] is not None
     assert zk["fairness"]["policy_version"] == settings.fairness_policy_version
     assert "model_hash" in zk["explanation"]
+    _assert_proof_verifies(zk)
     shap_vals = zk['explanation']['shap_values']
     # Flatten if nested
     if shap_vals and isinstance(shap_vals[0], list):
         shap_vals = shap_vals[0]
     feat_names = zk['explanation']['feature_names']
     top = max(zip(feat_names, shap_vals), key=lambda x: abs(float(x[1])) if not isinstance(x[1], list) else 0)
-    print(f"✓ test_defense_protect_enterprise: risk {score:.2f} -> PROTECT, zk={zk['zk_status']}, top_feature={top}")
+    print(f"✓ test_defense_protect_enterprise: risk {score:.2f} -> PROTECT, zk={zk['zk_status']} verified, top_feature={top}")
 
 def test_fairness_circuit_enterprise():
     circuit = FairnessCircuitEnterprise(settings.fairness_policy)

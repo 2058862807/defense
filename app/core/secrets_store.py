@@ -87,12 +87,30 @@ class SecretsStore:
         store.setdefault("secrets", {})[kv_path] = secret
         self._write_raw(store)
 
+    def touch(self) -> None:
+        """Materialize an empty encrypted store file if it does not exist."""
+        if not Path(self.path).exists():
+            self._write_raw({"version": _STORE_VERSION, "secrets": {}})
+
     def list_paths(self) -> list:
         try:
             store = self._read_raw()
         except Exception:
             return []
         return list(store.get("secrets", {}).keys())
+
+    def health(self) -> Dict[str, Any]:
+        """Store readiness probe: is the file present and decryptable right now?"""
+        has_file = Path(self.path).exists()
+        if self._key is None:
+            return {"ok": False, "has_file": has_file, "key_configured": False,
+                    "reason": "SECRETS_MASTER_KEY not configured (set env or source data/.secrets_master_key)"}
+        try:
+            self._read_raw()
+            return {"ok": True, "has_file": has_file, "key_configured": True, "reason": None}
+        except Exception as e:
+            return {"ok": False, "has_file": has_file, "key_configured": True,
+                    "reason": f"Store not decryptable with configured key (stale file or wrong key): {e}"}
 
 
 # Shared singleton - key configured via SECRETS_MASTER_KEY env when available.

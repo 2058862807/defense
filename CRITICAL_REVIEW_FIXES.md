@@ -4,6 +4,11 @@
 **Reviewer Findings:** Core "ZK fairness" mechanism was theater, plumbing to front-run is real but strategy missing  
 **Status:** ✅ FIXED - Real verification wired, no more mock, no more self-reported fairness
 
+> **CORRECTION (2026-08-05):** Hash/constraint figures stated in this dated report were
+> superseded by a claims-vs-evidence audit. Authoritative values: combined circuit hash
+> `d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41`, wasm `9e65903f…`,
+> zkey `db290f7b…`, **613 constraints / 619 wires**, powers of tau 14. See `README_PRODUCTION.md`.
+
 ---
 
 ## Original Critique Summary

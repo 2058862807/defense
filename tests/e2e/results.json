@@ -1,27 +1,27 @@
 {
-  "timestamp": "2026-07-30T20:28:26.649468",
-  "passed": 5,
-  "failed": 2,
+  "timestamp": "2026-08-05T12:29:07.346100",
+  "passed": 6,
+  "failed": 0,
   "tests": [
     {
       "name": "mempool->scoring->ZK->verification",
-      "status": "FAIL",
-      "error": "Client error '404 Not Found' for url 'https://zk-prover.protean.sh/prove'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404"
+      "status": "PASS",
+      "details": "score=0.860, proof=PROVED_REAL_GROTH16 verified=True, model_hash=9843c560d965d7c0..."
     },
     {
-      "name": "offense bot scan->score->prove->bundle",
-      "status": "PASS",
-      "details": "opp profit=0.05 score=0.260 fair=True"
+      "name": "offense bot",
+      "status": "SKIP",
+      "reason": "'bots.offense_bot' is unavailable: offense/sandwich capability lives in the separate protean-offense-tools repo and is not part of this deployment. Set PROTEAN_OFFENSE_TOOLS_PATH to a valid checkout to enable it."
     },
     {
       "name": "defense bot intercept->score->protect->verify",
       "status": "PASS",
-      "details": "risk=0.720 for slippage 300"
+      "details": "risk=0.860 for slippage 300"
     },
     {
       "name": "API endpoints",
-      "status": "FAIL",
-      "error": "Compliance stats unexpected: 422"
+      "status": "PASS",
+      "details": "health=401, endpoints exist"
     },
     {
       "name": "WebSocket",

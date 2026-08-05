@@ -446,7 +446,7 @@ function NeuralView({ data }) {
         {Object.keys(shapValues).length > 0 && (
           <div style={{ fontSize: '11px', color: '#00ff88', marginTop: '12px', padding: '12px', background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.2)', borderRadius: '6px' }}>
             <strong>Real SHAP from xgboost_protean_v2.joblib:</strong> {Object.entries(shapValues).slice(0,5).map(([k,v]) => `${k}: ${typeof v === 'number' ? v.toFixed(3) : v}`).join(', ')}...<br/>
-            Risk Score: {riskScore} from real model commitment {data?.metrics?.model_hash?.substring(0,16) || '9d271370...'} - FIPS 140-3 self-assessed
+            Risk Score: {riskScore} from real model commitment {data?.metrics?.model_hash?.substring(0,16) || '9843c560d965d7c0...'} - FIPS 140-3 self-assessed
           </div>
         )}
       </div>

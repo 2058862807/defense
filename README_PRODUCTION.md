@@ -42,16 +42,17 @@ Mempool Scan -> Offense Bot (ZK Certified Searcher)
 - Model commitment: `H(model_weights)` stored in `models/commitment.json`
 - Input commitment: `H(features)`
 - SHAP explanation + proof that explanation is correct w/o revealing model
-- **Real Groth16 via `circuits/final_artifacts/` WASM 1.7M + ZKEY final 198K from real multi-party ceremony 3 participants + beacon, 327 constraints, combined hash `f4f96c2ddd7a...` SLSA L3, `PROVED_REAL_GROTH16` via `snarkjs wtns calculate` + `groth16 prove` + `verify OK`** - Fixed from previous mock `PROVED_DEV_DETERMINISTIC` hash fabrication
+- **Real Groth16 via `circuits/final_artifacts/` WASM 1.7M + ZKEY final 297KB from real multi-party ceremony 3 participants + beacon, 613 constraints, combined hash `d80e3987...` SLSA L3, `PROVED_REAL_GROTH16` via `snarkjs wtns calculate` + `groth16 prove` + `verify OK`** - Fixed from previous mock `PROVED_DEV_DETERMINISTIC` hash fabrication
 - Circuit breaker: if ZK prover down, degraded mode logs warning but still protects (manual verification queue) - fail-closed in prod if `REQUIRE_ZK_PROOF=true`
 
 **2. ZK Fairness EVM Bots (Offense & Defense)**
 
-**Offense Bot** (`app/bots/offense_bot.py`):
+**Offense Bot** (`app/bots/offense_bot.py` — **not shipped in this pilot repo**; loaded from the private `protean-offense-tools` repo via `PROTEAN_OFFENSE_TOOLS_PATH`. Offense routes return 503 without it):
 - Finds MEV but self-regulates: disallows sandwich on small users (<1 ETH), max 50 bps slippage, only allowlisted routers
 - Generates ZK proof that it respects policy via real `CircuitIngestor` WASM+ZKEY
 - Submits via Flashbots relay with proof in metadata, PQC encrypted bundle ML-KEM-768 + AES-256-GCM
 - On-chain `FairnessRegistry.sol` **real verification** `zkVerifier.verifyProof(pA,pB,pC,publicInputs)` + `require(verified)` + `isFair` derived from verified `publicInputs[0]` not caller bool - Fixed from previous theater that trusted caller `isFair` bool and had `authorizedSubmitters[address(0)]=true` open for demo
+- **Known gap:** liquidation scanning was never fully implemented (`getReservesList` only, no subgraph/borrower watchlist).
 
 **Defense Bot** (`app/bots/defense_bot.py`):
 - Scores user tx MEV vulnerability (0-1), explains via SHAP top feature
@@ -89,7 +90,7 @@ cp .env.example .env
 # 2. Build real ZK artifacts (if not present in final_artifacts/)
 cd circuits/ceremony
 ./run_ceremony.sh
-# Generates real .zkey with multi-party ceremony, 3 participants + beacon, 198K final, 1.7M WASM, combined hash f4f96c2d...
+# Generates real .zkey with multi-party ceremony, 3 participants + beacon, 297KB final, 1.7M WASM, combined hash d80e3987...
 cd ../..
 
 # 3. Wire real .zkey into ingest.py - no fallback

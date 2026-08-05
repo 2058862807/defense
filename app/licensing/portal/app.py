@@ -73,7 +73,7 @@ async def get_explanation(tx_hash: str, view: str = "customer", user=Depends(get
         "action": "PROTECT_PRIVATE",
         "onchain_hash": "0xabc123def456...",
         "commitments": {
-            "model_commitment": "9d271370d0c4a2f6a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4",
+            "model_commitment": "9843c560d965d7c071051fcc92ed4d72c3f3eaf0e91bd64481b2e6497c1ed472",
             "input_commitment": "input123...",
             "score_commitment": "score123...",
             "shap_commitment": "shap123...",
@@ -91,9 +91,9 @@ async def get_explanation(tx_hash: str, view: str = "customer", user=Depends(get
             "policy_version": "1.2.0"
         },
         "provenance": {
-            "model_hash": "9d271370d0c4a2f6...",
+            "model_hash": "9843c560...",
             "training_data_hash": "1325128b3245b8e7...",
-            "circuit_hash": "db9cf5c741a4fa79514699a37a309ce0350e35a4f0491a742e31591b3018ef7a",
+            "circuit_hash": "d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41",
             "qrng_provider": "Qrypt",
             "hsm_provider": "AWS CloudHSM",
             "ofac_source": "live treasury.gov - sanctionslistservice.ofac.treas.gov",

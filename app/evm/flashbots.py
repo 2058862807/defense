@@ -102,6 +102,20 @@ class FlashbotsClientEnterprise:
         signed = self.auth_account.sign_message(msg)
         return f"{self.auth_account.address}:{signed.signature.hex()}"
 
+    async def send(self, bundle: List[Dict[str, Any]], target_block: int, zk_proof: Dict = None, is_offense: bool = True) -> Dict[str, Any]:
+        """
+        Chain-aware bundle delivery dispatch.
+
+        Ethereum mainnet (1): Flashbots relay eth_sendBundle with X-Flashbots-Signature.
+        Every other chain (Polygon 137, etc.): no relay exists, so deliver via
+        direct eth_sendRawTransaction (send_direct) - this is the path defense
+        and offense bundles actually take on the configured chain.
+        """
+        if settings.evm_chain_id == 1:
+            return await self.send_bundle(bundle, target_block, zk_proof, is_offense)
+        logger.info(f"Chain {settings.evm_chain_id}: no Flashbots relay - direct eth_sendRawTransaction delivery")
+        return await self.send_direct(bundle, target_block, zk_proof, is_offense)
+
     async def send_bundle(self, bundle: List[Dict[str, Any]], target_block: int, zk_proof: Dict = None, is_offense: bool = True) -> Dict[str, Any]:
         """
         Enterprise sendBundle:

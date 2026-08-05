@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 class ZKProverEnterprise:
     def __init__(self, prover_url: str = None, verifier_url: str = None):
-        self.prover_url = prover_url or settings.zk_prover_url
-        self.verifier_url = verifier_url or settings.zk_verifier_url
+        # NOTE: prover_url/verifier_url retained only for API compatibility.
+        # Proving is in-process (CircuitIngestor + snarkjs); no remote service.
         self.circuit_hash_expected = settings.zk_circuit_hash
         self._snarkjs = None
 

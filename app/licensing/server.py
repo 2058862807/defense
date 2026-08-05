@@ -356,7 +356,7 @@ async def customer_explanation(customer: str, tx_hash: Optional[str] = None, use
         "action": "PROTECT_PRIVATE",
         "onchain_hash": "0xabc123...",
         "commitments": {
-            "model_commitment": "9d271370d0c4a2f6...",
+            "model_commitment": "9843c560...",
             "input_commitment": "input123...",
         },
         "explanation": {
@@ -370,9 +370,9 @@ async def customer_explanation(customer: str, tx_hash: Optional[str] = None, use
             "policy_version": "1.2.0"
         },
         "provenance": {
-            "model_hash": "9d271370...",
+            "model_hash": "9843c560...",
             "training_data_hash": "1325...",
-            "circuit_hash": "db9cf5c7...",
+            "circuit_hash": "d80e3987...",
             "qrng_provider": "Qrypt",
             "hsm_provider": "AWS CloudHSM",
             "ofac_source": "live treasury.gov",

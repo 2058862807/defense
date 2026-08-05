@@ -105,6 +105,14 @@ class PilotSecretsStore:
     def snapshot(self) -> List[Dict[str, Any]]:
         return [self.status(f) for f in PILOT_CREDENTIALS]
 
+    def store_health(self) -> Dict[str, Any]:
+        """Encrypted-store readiness: is it present and decryptable right now?"""
+        try:
+            return self.store.health()
+        except Exception as e:
+            return {"ok": False, "has_file": False, "key_configured": False,
+                    "reason": f"Secrets store unavailable: {e}"}
+
     def refresh(self) -> None:
         """Re-init runtime integrations that cache credentials at construction."""
         try:

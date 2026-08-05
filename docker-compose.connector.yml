@@ -19,7 +19,7 @@ services:
       - REDIS_URL=redis://redis:6380/0
       - POSTGRES_URL=postgresql://protean:protean@postgres:5432/protean?sslmode=require
       - KAFKA_BROKERS=kafka:9092
-      - ZK_CIRCUIT_HASH=db9cf5c741a4fa79514699a37a309ce0350e35a4f0491a742e31591b3018ef7a
+      - ZK_CIRCUIT_HASH=d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41
       - QRYPT_API_TOKEN=${QRYPT_API_TOKEN}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}

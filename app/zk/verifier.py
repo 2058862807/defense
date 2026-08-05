@@ -53,7 +53,9 @@ GROTH16_VERIFIER_ABI = [
 
 class ZKVerifierEnterprise:
     def __init__(self, verifier_url: str = None):
-        self.verifier_url = verifier_url or settings.zk_verifier_url
+        # NOTE: verifier_url retained only for API compatibility. Verification
+        # is in-process (snarkjs) and on-chain (Groth16Verifier contract).
+        pass
 
     def verify_offchain(self, proof: Dict, public_inputs: List, commitments: Dict = None) -> bool:
         """Real local snarkjs verification against the real verification key. Fail-closed."""

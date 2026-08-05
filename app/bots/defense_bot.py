@@ -80,7 +80,7 @@ class DefenseBotEnterprise(BaseProteanBotEnterprise):
 
             try:
                 target_block = self.evm.get_block_number() + 1
-                result = await self.flashbots.send_bundle(
+                result = await self.flashbots.send(
                     bundle=protected_bundle,
                     target_block=target_block,
                     zk_proof=zk_package["zk_proof"],

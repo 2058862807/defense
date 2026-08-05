@@ -71,11 +71,19 @@ def set_credential(field: str, body: dict, _user: dict = _admin):
     value = body.get("value")
     if not value or not isinstance(value, str) or not value.strip():
         raise HTTPException(status_code=422, detail="Body must include non-empty string 'value'")
+    store_ok = pilot_secrets.store_health()["ok"]
+    if not store_ok:
+        raise HTTPException(
+            status_code=503,
+            detail="Encrypted secrets store not writable. Operator: bootstrap with "
+                   "`venv/bin/python scripts/init_secrets.py --fresh --write-key-file`, or "
+                   "inject SECRETS_MASTER_KEY via env/Vault.",
+        )
     try:
         status = pilot_secrets.set(field, value.strip())
     except Exception as e:
         logger.error(f"Failed to store pilot credential {field}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to store credential: {e}")
+        raise HTTPException(status_code=503, detail=f"Failed to store credential (secrets store unavailable): {e}")
     pilot_secrets.refresh()
     _audit("set", field, _user, {"configured": status.get("configured"), "source": status.get("source")})
     return {"updated": status}
@@ -98,7 +106,6 @@ def status(_user: dict = _admin):
     creds = {s["field"]: s for s in pilot_secrets.snapshot()}
 
     integrations = {}
-
     try:
         from app.compliance.address_risk import address_risk_engine
         integrations["compliance"] = {
@@ -150,5 +157,6 @@ def status(_user: dict = _admin):
     return {
         "credentials": creds,
         "integrations": integrations,
+        "store": pilot_secrets.store_health(),
         "checked_at": datetime.utcnow().isoformat(),
     }

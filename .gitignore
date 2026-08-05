@@ -62,6 +62,9 @@ coverage/
 
 # Runtime secrets + audit data - never commit
 data/secrets.enc
+data/.secrets_master_key
+data/local_secrets.env
+data/secrets.enc
 data/audit.jsonl
 data/ledger.db
 data/ledger.db-*

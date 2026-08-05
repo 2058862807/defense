@@ -12,12 +12,26 @@ Government Standard: FIPS 140-3, no mocks in prod paths, real on-chain data
 import asyncio
 import logging
 import json
+import os
 import time
 from pathlib import Path
 import sys
 
 # Add parent to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+# Load local-only signer keys + secrets master key (0600, git-ignored) BEFORE
+# importing app config, so pydantic-settings snapshots EVM_PRIVATE_KEY etc.
+# from env. Keeps signer keys out of .env (secret hygiene) while still
+# exercising the real signing path.
+for _envfile in ("data/local_secrets.env", "data/.secrets_master_key"):
+    _p = Path(__file__).parent.parent.parent / _envfile
+    if _p.exists():
+        for _line in _p.read_text().splitlines():
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
 
 from app.ml.scorer import ProteanScorerEnterprise
 from app.ml.xai import ZKXAICouplerEnterprise
@@ -96,34 +110,20 @@ def test_mempool_scoring_pipeline():
         assert "shap_values" in zk_package["explanation"], "Missing SHAP"
         assert zk_package["commitments"]["model_commitment"] is not None, "Missing model commitment"
 
-        # 4. Verification via real verifier (if available) or via ingest.py
-        try:
-            ingestor = CircuitIngestor()
-            # Generate real witness and proof with correct Poseidon
-            inputs = {
-                "modelCommitment": "11344094074881186137859743404234365978119253787583526441303892667757095072923",
-                "inputCommitment": str(hash(str(mempool_tx)) % 10**10),
-                "modelHashPart1": "12345",
-                "modelHashPart2": "67890",
-                "valueEthScaled": int(mempool_tx["value_eth"] * 1e6),
-                "slippageBps": int(mempool_tx["slippage_bps"]),
-                "isSandwich": 0,
-                "isProtected": mempool_tx["is_protected_user"],
-                "routerHash": "111",
-                "minBalanceScaled": 1000000,
-                "maxSlippageBps": 50
-            }
-            wtns_path = ingestor.generate_witness(inputs)
-            proof_result = ingestor.generate_proof(witness_path=wtns_path)
-            assert proof_result["status"] == "PROVED_REAL_GROTH16", f"Proof status not real: {proof_result['status']}"
-            assert "proof" in proof_result, "Missing proof"
-        except Exception as e:
-            # If circuit artifacts not available, still pass if ZK package has proof
-            if not zk_package.get("zk_proof"):
-                raise AssertionError(f"Real ZK proof generation failed: {e}")
-            print(f"    Note: CircuitIngestor fallback, but ZK package has proof: {zk_package['zk_status']}")
+        # 4. Verification: real snarkjs groth16 verify of the produced proof.
+        #    Hard assertion - no soft-pass. On-chain verify is separate and
+        #    network-dependent; off-chain cryptographic verification must pass.
+        from app.zk.verifier import ZKVerifierEnterprise
+        verifier = ZKVerifierEnterprise()
+        verified = verifier.verify_offchain(
+            zk_package.get("zk_proof"),
+            zk_package.get("zk_public_inputs", []),
+            zk_package.get("commitments"),
+        )
+        assert verified, "Real Groth16 proof must pass snarkjs verify (off-chain)"
+        assert zk_package.get("zk_public_inputs"), "ZK public inputs must be present for verification"
 
-        results.record_pass("mempool->scoring->ZK->verification", f"score={score:.3f}, proof={zk_package.get('zk_status')}, model_hash={meta.get('model_hash','')[:16]}...")
+        results.record_pass("mempool->scoring->ZK->verification", f"score={score:.3f}, proof={zk_package.get('zk_status')} verified=True, model_hash={meta.get('model_hash','')[:16]}...")
         return True
 
     except Exception as e:

@@ -10,6 +10,9 @@ Vault first, then this store.
 Usage:
   SECRETS_MASTER_KEY='...' ENV=dev PYTHONPATH=/path/to/defense_v2 venv/bin/python scripts/init_secrets.py
 
+  # Fresh bootstrap for a bank pilot (generates a key, replaces a stale store):
+  venv/bin/python scripts/init_secrets.py --fresh --write-key-file
+
 Secrets are taken from env vars:
   EVM_PRIVATE_KEY       -> secret/data/prod/evm-signer    {private_key}
   FLASHBOTS_SIGNING_KEY -> secret/data/prod/flashbots-auth {signing_key}
@@ -20,10 +23,20 @@ kv_path -> {key: value} to import arbitrary secrets:
     "secret/data/prod/evm-signer":    {"private_key": "0x..."},
     "secret/data/prod/flashbots-auth": {"signing_key": "0x..."}
   }
+
+Options:
+  --fresh           Replace an existing store even if the current key cannot
+                    decrypt it (stale file from an old/unknown key). Without
+                    --fresh, an undecryptable store is an error.
+  --write-key-file  Persist the master key to <store-dir>/.secrets_master_key
+                    (0600, git-ignored) so scripts/start_stack.sh can source it.
+                    For production, prefer injecting SECRETS_MASTER_KEY via
+                    env / Vault / systemd EnvironmentFile instead.
 """
 import argparse
 import json
 import os
+import secrets as _secrets
 import sys
 from pathlib import Path
 
@@ -36,14 +49,39 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Init/update local encrypted secrets store")
     parser.add_argument("--plaintext-file", help="Optional JSON file: kv_path -> {key: value}")
     parser.add_argument("--store-path", default="data/secrets.enc")
+    parser.add_argument("--fresh", action="store_true", help="Replace an undecryptable/stale store")
+    parser.add_argument("--write-key-file", action="store_true",
+                        help="Persist the master key next to the store (0600) for the local stack")
     args = parser.parse_args()
 
     master = os.getenv("SECRETS_MASTER_KEY")
     if not master or len(master) < 16:
-        print("[!] SECRETS_MASTER_KEY must be set and >= 16 characters")
-        return 1
+        if args.fresh:
+            master = _secrets.token_hex(24)
+            print("[i] No SECRETS_MASTER_KEY provided; generated a fresh one.")
+        else:
+            print("[!] SECRETS_MASTER_KEY must be set and >= 16 characters (or pass --fresh)")
+            return 1
 
     store = SecretsStore(path=args.store_path, master_key=master)
+    store.touch()
+
+    store_path = Path(args.store_path)
+    if store_path.exists():
+        probe = SecretsStore(path=args.store_path, master_key=master)
+        if not probe.health()["ok"]:
+            if not args.fresh:
+                print(f"[!] Existing store {args.store_path} is not decryptable with this key. "
+                      "Pass --fresh to replace it (any old credentials are lost).")
+                return 1
+            print(f"[!] Existing store is stale/undecryptable - recreating it (--fresh).")
+            store_path.unlink()
+
+    if args.write_key_file:
+        key_file = store_path.parent / ".secrets_master_key"
+        key_file.write_text(master + "\n")
+        os.chmod(key_file, 0o600)
+        print(f"[i] Master key written to {key_file} (0600, git-ignored) - start_stack.sh sources it")
 
     imported = {}
     if args.plaintext_file:

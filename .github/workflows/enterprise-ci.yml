@@ -86,9 +86,11 @@ jobs:
         env:
           ENV: dev
           JWT_JWKS_URL: https://auth.dev.protean.sh/.well-known/jwks.json
-          ZK_PROVER_URL: http://localhost:5000/prove
-          ZK_VERIFIER_URL: http://localhost:5000/verify
-          ZK_CIRCUIT_HASH: dev_test_hash
+          # Proving/verification are in-process (CircuitIngestor/snarkjs).
+          ZK_CIRCUIT_PATH_WASM: circuits/final_artifacts/fairness_policy.wasm
+          ZK_CIRCUIT_PATH_ZKEY: circuits/final_artifacts/fairness_policy_final.zkey
+          ZK_VERIFICATION_KEY_PATH: circuits/final_artifacts/verification_key.json
+          ZK_CIRCUIT_HASH: d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41
           EVM_RPC_URL: https://mainnet.infura.io/v3/test
           EVM_WS_URL: wss://mainnet.infura.io/ws/v3/test
           VAULT_ADDR: https://vault.dev.protean.sh

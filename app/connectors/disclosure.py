@@ -85,7 +85,7 @@ def get_disclosure_tiers_definition() -> Dict[str, Any]:
                 "score": 0.85,
                 "action": "PROTECT_PRIVATE",
                 "onchain_hash": "0xabc...",
-                "commitments": {"model_commitment": "9d2713...", "input_commitment": "abc..."},
+                "commitments": {"model_commitment": "9843c560...", "input_commitment": "abc..."},
                 "explanation": {"shap_values": [0.1, 0.2], "feature_names": ["gas", "value"], "top_feature": "slippage_bps"},
                 "fairness": {"is_fair": True, "reasons": ["Fair per policy v1.2.0"], "policy_version": "1.2.0"}
             }
@@ -95,14 +95,14 @@ def get_disclosure_tiers_definition() -> Dict[str, Any]:
             "fields": ["* - full zk_package + provenance.training_data_hash + provenance.circuit_hash + provenance.qrng_provider + provenance.hsm_provider + provenance.ofac_source + provenance.fatf_source"],
             "example": {
                 "score": 0.85,
-                "metadata": {"model_hash": "9d2713...", "training_data_hash": "1325..."},
-                "commitments": {"model_commitment": "9d2713..."},
+                "metadata": {"model_hash": "9843c560...", "training_data_hash": "1325..."},
+                "commitments": {"model_commitment": "9843c560..."},
                 "explanation": {"shap_values": [...], "feature_names": [...]},
                 "fairness": {"is_fair": True, "reasons": [...], "policy_version": "1.2.0"},
                 "provenance": {
-                    "model_hash": "9d2713...",
+                    "model_hash": "9843c560...",
                     "training_data_hash": "1325...",
-                    "circuit_hash": "db9cf5c7...",
+                    "circuit_hash": "d80e3987...",
                     "qrng_provider": "Qrypt",
                     "hsm_provider": "AWS CloudHSM",
                     "ofac_source": "live treasury.gov",

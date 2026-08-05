@@ -34,8 +34,9 @@ class Settings(BaseSettings):
     model_registry_url: str = Field(default="https://registry.protean.sh/models")
 
     # --- ZK ---
-    zk_prover_url: str = Field(..., description="https://zk-prover.protean.sh")
-    zk_verifier_url: str = Field(..., description="https://zk-verifier.protean.sh")
+    # No remote prover/verifier URLs: proving and verification run in-process
+    # via CircuitIngestor (snarkjs groth16) and the deployed Groth16Verifier
+    # contract on-chain. Remote zk-prover/zk-verifier endpoints are removed.
     zk_circuit_path_wasm: str = "circuits/build/fairness_policy.wasm"
     zk_circuit_path_zkey: str = "circuits/build/fairness_policy_final.zkey"
     zk_verification_key_path: str = "circuits/build/verification_key.json"
@@ -293,8 +294,6 @@ except ValidationError as e:
     class DevSettings(Settings):
         # Provide dev defaults only if env != production, otherwise still require
         jwt_jwks_url: str = "https://auth.dev.protean.sh/.well-known/jwks.json"
-        zk_prover_url: str = "http://localhost:5000/prove"
-        zk_verifier_url: str = "http://localhost:5000/verify"
         zk_circuit_hash: str = "dev_hash_placeholder_shac256_of_circuit"
         evm_rpc_url: SecretStr = SecretStr("https://mainnet.infura.io/v3/dev")  # type: ignore
         evm_ws_url: SecretStr = SecretStr("wss://mainnet.infura.io/ws/v3/dev")  # type: ignore
@@ -317,8 +316,6 @@ except ValidationError as e:
         settings = DevSettingsFinal(
             env="dev",
             jwt_jwks_url="https://auth.dev.protean.sh/.well-known/jwks.json",
-            zk_prover_url="http://localhost:5000/prove",
-            zk_verifier_url="http://localhost:5000/verify",
             zk_circuit_hash="dev_test_hash_placeholder_for_ci",
             evm_rpc_url=SecretStr("https://mainnet.infura.io/v3/dev"),
             evm_ws_url=SecretStr("wss://mainnet.infura.io/ws/v3/dev"),

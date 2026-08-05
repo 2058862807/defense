@@ -16,6 +16,22 @@ BACKEND_LOG=/tmp/backend.log
 FRONTEND_LOG=/tmp/frontend.log
 SUPERVISOR_PIDFILE=/tmp/stack-supervisor.pid
 
+# --- Secrets master key: prefer env/Vault injection; fall back to the 0600
+#     local key file created by `scripts/init_secrets.py --fresh --write-key-file`.
+if [ -z "${SECRETS_MASTER_KEY:-}" ] && [ -f "$ROOT/data/.secrets_master_key" ]; then
+  SECRETS_MASTER_KEY="$(cat "$ROOT/data/.secrets_master_key")"
+  export SECRETS_MASTER_KEY
+fi
+
+# --- Local signer keys (0600, git-ignored): EVM_PRIVATE_KEY / FLASHBOTS_SIGNING_KEY
+#     are intentionally NOT in .env. Source the env-only file when present.
+if [ -f "$ROOT/data/local_secrets.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$ROOT/data/local_secrets.env"
+  set +a
+fi
+
 # --- A2 TLS/mTLS ---
 REQUIRE_TLS="${REQUIRE_TLS:-false}"
 REQUIRE_MTLS_PEER="${REQUIRE_MTLS_PEER:-false}"

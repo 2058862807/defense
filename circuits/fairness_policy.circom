@@ -5,13 +5,13 @@
  * 
  * Enforces:
  * - Slippage <= maxSlippageBps (50 bps default)
- * - Sandwich attacks ALLOWED (policy v1.3.0: allowSandwich = true)
- * - Small user protection disabled (policy v1.3.0: disallowSandwichSmallUsers = false)
+ * - Sandwich attacks BLOCKED for small users (policy: disallowSandwichSmallUsers = true,
+ *   minBalanceScaled threshold enforced by the prover at 1e6 -> 1 ETH scaled)
  * - Protected router allowlist via Poseidon hash
  * - Model commitment via Poseidon (not SHA256 for circuit efficiency)
  * 
  * Compiled with: circom 2.1.5, snarkjs 0.7.4, circomlib 2.1.5
- * Powers of Tau: 20 (2^20 constraints)
+ * Powers of Tau: 14 (final r1cs: 613 constraints, 619 wires, 2 public inputs + 1 output)
  * Groth16, bn128
  * 
  * Build:
@@ -119,7 +119,7 @@ component main {public [modelCommitment, inputCommitment]} = FairnessPolicy();
 
 /* Test vectors (government compliance tests):
    1. arbitrage, value 2 ETH, slippage 20 bps => isFair=1
-   2. sandwich, value 0.5 ETH, slippage 20 bps => isFair=1 (allowSandwich=true, small-user protection off)
-   3. sandwich, value 2 ETH, slippage 20 bps => isFair=1 (allowSandwich=true)
+   2. sandwich, value 0.5 ETH, slippage 20 bps => isFair=0 (small-user protection ON: 0.5 ETH < 1 ETH threshold)
+   3. sandwich, value 2 ETH, slippage 20 bps => isFair=1 (above small-user threshold; sandwich allowed by policy)
    4. swap, slippage 100 bps, max 50 => isFair=0
 */

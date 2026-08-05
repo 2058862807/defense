@@ -75,7 +75,7 @@ defense/
 ├── circuits/
 │   ├── fairness_policy.circom
 │   ├── ceremony/run_ceremony.sh (multi-party)
-│   ├── build/ (wasm 1.7M, final.zkey 198K, verification_key.json, combined.hash)
+│   ├── build/ (wasm 1.7M, final.zkey 297KB, verification_key.json, combined.hash)
 │   └── gnark/fairness_policy.go
 ├── contracts/
 │   ├── FairnessRegistry.sol

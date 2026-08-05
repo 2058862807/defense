@@ -13,6 +13,8 @@ Fallback: Software signing via eth_account (for dev) or Vault Transit (for prod 
 import logging
 from typing import Optional
 
+from web3 import Web3
+
 from .base import HSMProvider
 from .aws_cloudhsm import AWSCloudHSM
 from .gcp_hsm import GCPCloudHSM
@@ -50,7 +52,11 @@ class HSMSoftwareFallback:
                     priv_key = "0x" + priv_key
                 return bytes.fromhex(priv_key.removeprefix("0x"))
 
-        if settings.env != "production" and settings.evm_private_key:
+        # Env key is allowed when not production, or when software custody is
+        # explicitly permitted (hsm_require_hardware=false). Mirrors the custody
+        # chokepoint policy in app/hsm/custody.py - never sign in a hardened
+        # production posture with an env key.
+        if (not settings.is_production() or not settings.hsm_require_hardware) and settings.evm_private_key:
             return bytes.fromhex(settings.evm_private_key.get_secret_value().removeprefix("0x"))
 
         raise RuntimeError(
@@ -67,9 +73,12 @@ class HSMSoftwareFallback:
 
         priv_key = self._resolve_key(key_id)
         backend = SoftwareSigningBackend(priv_key)
-        msg_hash = bytes(encode_defunct(data).hash)
+        # eth-account 0.13.x: SignableMessage is (version, header, body); the
+        # EIP-191 message hash is keccak(version || header || body).
+        sm = encode_defunct(data)
+        msg_hash = bytes(Web3.keccak(sm.version + sm.header + sm.body))
         r, s, recid = backend.sign_digest(msg_hash)
-        signature = Signature(vrs=(27 + recid, r, s)).to_bytes()
+        signature = Signature(vrs=(recid, r, s)).to_bytes()
         backend.zeroize()
 
         logger.warning(f"HSM FALLBACK to software custody via {key_id} - not FIPS 140-2 Level 3")
