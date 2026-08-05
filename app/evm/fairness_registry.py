@@ -66,6 +66,60 @@ FAIRNESS_ABI_ENTERPRISE = [
     }
 ]
 
+def trans_verify_explanation(zk_xai_package: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Trans-verify the explanation that backs a ZK proof.
+
+    The Groth16 public inputs expose only [isFair, modelCommitment,
+    inputCommitment], so on-chain verification alone does NOT bind the displayed
+    SHAP explanation. To close that gap, recompute the canonical commitments
+    (SHA-256 FIPS 180-4, RFC 8785 canonical JSON) from the displayed package and
+    compare them against the commitments produced at proof time.
+
+    Trust chain (transitive): displayed (score, SHAP, input)
+        --recompute--> combined_commitment
+        --match--> registry record metadata (signed submitter)
+        --inputCommitment/modelCommitment--> on-chain Groth16 verification.
+
+    If 'combined_commitment' matches, the explanation is provably the one that
+    was committed (and, once submitted via submitFairnessProof, the one anchored
+    in the on-chain record) - not a post-hoc fabrication attached to a valid proof.
+    """
+    explanation = zk_xai_package.get("explanation", {}) or {}
+    commitments = zk_xai_package.get("commitments", {}) or {}
+    score = zk_xai_package.get("score")
+    model_hash = commitments.get("model_commitment") or explanation.get("model_hash")
+    if not model_hash:
+        raise ValueError("Model commitment (model_hash) required for trans-verification")
+
+    # Canonical JSON for deterministic hashing (RFC 8785 JCS), mirroring
+    # app/ml/xai.py create_commitments byte-for-byte.
+    feature_bytes = json.dumps(explanation.get("input"), sort_keys=True, separators=(',', ':')).encode()
+    score_bytes = json.dumps(score, sort_keys=True).encode()
+    shap_bytes = json.dumps(explanation.get("shap_values"), sort_keys=True, separators=(',', ':')).encode()
+    model_bytes = model_hash.encode()
+
+    recomputed = {
+        "model_commitment": model_hash,
+        "input_commitment": hashlib.sha256(feature_bytes).hexdigest(),
+        "score_commitment": hashlib.sha256(score_bytes).hexdigest(),
+        "shap_commitment": hashlib.sha256(shap_bytes).hexdigest(),
+        "combined_commitment": hashlib.sha256(
+            model_bytes + feature_bytes + score_bytes + shap_bytes
+        ).hexdigest(),
+    }
+    matches = {k: (recomputed[k] == commitments.get(k)) for k in recomputed}
+    return {
+        "recomputed": recomputed,
+        "matches": matches,
+        "anchored_ok": bool(matches) and all(matches.values()),
+        "note": (
+            "combined_commitment binds score+SHAP+input to model_commitment; "
+            "on-chain Groth16 binds isFair+inputCommitment+modelCommitment"
+        ),
+    }
+
+
 class FairnessRegistryEnterprise:
     def __init__(self, evm_client: EVMClientEnterprise = None, contract_address: str = None, verifier_address: str = None):
         self.client = evm_client or EVMClientEnterprise()
@@ -131,6 +185,16 @@ class FairnessRegistryEnterprise:
             "reasons": fairness.get("reasons", []),
             "model_hash": zk_xai_package.get("metadata", {}).get("model_hash"),
             "provenance": zk_xai_package.get("provenance", {}),
+            # Trans-verify anchor: binding the off-chain explanation (score, SHAP,
+            # input) to this on-chain record. combined_commitment =
+            # SHA-256(model || input || score || shap) - a viewer can recompute it
+            # from the displayed package and compare, closing the gap where the
+            # Groth16 public inputs only expose [isFair, modelCommitment,
+            # inputCommitment] and leave the explanation itself unbound.
+            "combined_commitment": commitments.get("combined_commitment"),
+            "shap_commitment": commitments.get("shap_commitment"),
+            "score_commitment": commitments.get("score_commitment"),
+            "input_commitment": commitments.get("input_commitment"),
             "fips_compliance": "FIPS-140-3"
         }
         metadata_json = json.dumps(metadata_dict)

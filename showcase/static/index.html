@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ZK-XAI Crown Jewel — PROTEAN DEFENSE</title>
+<style>
+  :root {
+    --bg: #0a0e14;
+    --panel: #11161f;
+    --panel2: #161d29;
+    --line: #232d3d;
+    --text: #d7e0ec;
+    --muted: #8aa0bd;
+    --accent: #38bdf8;
+    --green: #34d399;
+    --red: #f87171;
+    --amber: #fbbf24;
+    --mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 32px 16px 80px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  header h1 {
+    font-size: 22px;
+    letter-spacing: 2px;
+    margin: 0 0 4px;
+  }
+  header h1 .dim { color: var(--muted); }
+  header .pipe {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 13px;
+    margin: 0 0 24px;
+  }
+  .controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 24px;
+  }
+  select, button {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+  }
+  button {
+    background: var(--accent);
+    color: #06121d;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    transition: filter .15s;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .5; cursor: wait; }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px;
+  }
+  .panel h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--muted);
+    margin: 0 0 14px;
+  }
+  .score-big {
+    font-size: 44px;
+    font-weight: 800;
+    font-family: var(--mono);
+    line-height: 1;
+  }
+  .badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin-top: 10px;
+  }
+  .b-green { background: rgba(52,211,153,.15); color: var(--green); }
+  .b-red   { background: rgba(248,113,113,.15); color: var(--red); }
+  .b-amber { background: rgba(251,191,36,.15);  color: var(--amber); }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; }
+  .bar-label { width: 150px; font-size: 12px; color: var(--muted); text-align: right; flex-shrink: 0; }
+  .bar-track { flex: 1; height: 14px; background: var(--panel2); border-radius: 4px; position: relative; }
+  .bar-fill { position: absolute; top: 0; height: 100%; border-radius: 4px; }
+  .bar-val { width: 70px; font-family: var(--mono); font-size: 11px; color: var(--muted); flex-shrink: 0; }
+  .mono { font-family: var(--mono); font-size: 11.5px; line-height: 1.7; word-break: break-all; }
+  .cmt { display: grid; grid-template-columns: 130px 1fr; gap: 2px 12px; }
+  .cmt .k { color: var(--muted); }
+  .cmt .v { color: var(--text); }
+  .proof-point { margin: 4px 0; }
+  .proof-point b { color: var(--muted); font-weight: 500; margin-right: 6px; }
+  .verified-box {
+    border: 1px solid var(--green);
+    background: rgba(52,211,153,.08);
+    color: var(--green);
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 16px;
+    text-align: center;
+    padding: 18px;
+    border-radius: 10px;
+    letter-spacing: 2px;
+  }
+  .verified-box.fail { border-color: var(--red); background: rgba(248,113,113,.08); color: var(--red); }
+  .verified-box.warn { border-color: var(--amber); background: rgba(251,191,36,.08); color: var(--amber); }
+  .meta { color: var(--muted); font-size: 12px; }
+  .spinner {
+    display: none;
+    border: 3px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    width: 22px; height: 22px;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .reason { font-size: 13px; color: var(--amber); margin: 6px 0 0; }
+  .fine { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .error-box { color: var(--red); font-family: var(--mono); font-size: 13px; }
+  .full { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>PROTEAN DEFENSE <span class="dim">— ZK-XAI COUPLING</span></h1>
+    <p class="pipe">score &#8594; SHAP &#8594; commitments &#8594; Groth16 proof &#8594; verified</p>
+  </header>
+
+  <div class="controls">
+    <select id="scenario"></select>
+    <button id="run">Run pipeline</button>
+    <div class="spinner" id="spinner"></div>
+    <span class="fine" id="status"></span>
+  </div>
+
+  <div class="grid">
+    <div class="panel" id="scorePanel">
+      <h2>Model score (XGBoost, commitment-verified)</h2>
+      <div class="score-big" id="score">—</div>
+      <div><span class="badge" id="riskBadge" style="display:none"></span></div>
+      <div class="reason" id="fairness"></div>
+      <div class="fine" id="scoreMeta"></div>
+    </div>
+
+    <div class="panel full" id="shapPanel">
+      <h2>SHAP feature attribution — why the model decided</h2>
+      <div id="shapRows"></div>
+      <div class="fine" id="shapMeta"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Cryptographic commitments (SHA-256, FIPS 180-4)</h2>
+      <div class="cmt mono" id="commitments"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Verification</h2>
+      <div class="verified-box" id="verified">PENDING</div>
+      <div class="fine" id="verifyMeta"></div>
+      <div class="mono" id="onchain" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+        <div class="proof-point"><b>on-chain:</b> —</div>
+        <div class="proof-point"><b>verifier:</b> —</div>
+        <div class="proof-point"><b>chain:</b> —</div>
+      </div>
+      <div class="mono" id="transVerify" style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+        <div class="proof-point"><b>explanation anchored:</b> —</div>
+        <div class="proof-point"><b>combined commitment:</b> —</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Groth16 proof (real snarkjs)</h2>
+      <div class="mono" id="proof">
+        <div class="proof-point"><b>status:</b> —</div>
+        <div class="proof-point"><b>pi_a:</b> —</div>
+        <div class="proof-point"><b>pi_b:</b> —</div>
+        <div class="proof-point"><b>pi_c:</b> —</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Public inputs</h2>
+      <div class="mono" id="publicInputs">—</div>
+      <div class="fine" id="provenance"></div>
+    </div>
+  </div>
+
+  <div class="grid" id="errBox"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function trunc(x, n = 18) {
+  if (x == null) return "—";
+  if (Array.isArray(x)) return "[" + x.map((v) => trunc(v, 12)).join(", ") + "]";
+  const s = String(x);
+  if (s.length <= n) return s;
+  if (s.startsWith("0x") || /^[0-9]+$/.test(s)) return s.slice(0, n) + "…" + s.slice(-6);
+  return s.slice(0, n) + "…";
+}
+
+async function loadScenarios() {
+  const r = await fetch("/api/scenarios");
+  const data = await r.json();
+  const sel = $("scenario");
+  sel.innerHTML = "";
+  for (const s of data.scenarios) {
+    const o = document.createElement("option");
+    o.value = s.id;
+    o.textContent = s.name;
+    sel.appendChild(o);
+  }
+}
+
+function renderShap(features, base, score) {
+  const max = Math.max(...features.map((f) => Math.abs(f.shap)), 0.0001);
+  const rows = $("shapRows");
+  rows.innerHTML = "";
+  const baseRow = document.createElement("div");
+  baseRow.className = "bar-row";
+  baseRow.innerHTML =
+    '<div class="bar-label">base value</div>' +
+    '<div class="bar-track"><div class="bar-fill" style="left:0;width:0"></div></div>' +
+    '<div class="bar-val">' + base.toFixed(4) + "</div>";
+  rows.appendChild(baseRow);
+  for (const f of features) {
+    const dir = f.shap >= 0 ? "left:50%;background:var(--red)" : "right:50%;background:var(--green)";
+    const width = Math.max(2, (Math.abs(f.shap) / max) * 50);
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    row.innerHTML =
+      '<div class="bar-label">' + f.name + " <span style=\"opacity:.55\">(" + trunc(f.raw, 10) + ")</span></div>" +
+      '<div class="bar-track"><div class="bar-fill" style="' + dir + ";width:" + width + '%"></div></div>' +
+      '<div class="bar-val">' + f.shap.toFixed(4) + "</div>";
+    rows.appendChild(row);
+  }
+}
+
+function renderCommitments(c) {
+  $("commitments").innerHTML = Object.entries(c || {})
+    .map(([k, v]) => '<div class="k">' + k + '</div><div class="v">' + v + "</div>")
+    .join("");
+}
+
+function renderProof(proof) {
+  const pts = proof.points || {};
+  $("proof").innerHTML =
+    '<div class="proof-point"><b>status:</b> ' + proof.status + "</div>" +
+    '<div class="proof-point"><b>pi_a:</b> ' + trunc(pts.pi_a) + "</div>" +
+    '<div class="proof-point"><b>pi_b:</b> ' + trunc(pts.pi_b) + "</div>" +
+    '<div class="proof-point"><b>pi_c:</b> ' + trunc(pts.pi_c) + "</div>";
+}
+
+async function run() {
+  const btn = $("run");
+  btn.disabled = true;
+  $("spinner").style.display = "inline-block";
+  $("status").textContent = "scoring → SHAP → commitments → proving → verifying…";
+  $("errBox").innerHTML = "";
+  $("verified").className = "verified-box";
+  $("verified").textContent = "PENDING";
+
+  try {
+    const r = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenario_id: $("scenario").value }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      $("errBox").innerHTML = '<div class="panel full"><div class="error-box">' + d.error + "</div></div>";
+      return;
+    }
+    $("score").textContent = d.score.toFixed(4);
+    const badge = $("riskBadge");
+    badge.style.display = "inline-block";
+    badge.textContent = "RISK " + d.risk_level;
+    badge.className = "badge " + (d.risk_level === "HIGH" ? "b-red" : d.risk_level === "MEDIUM" ? "b-amber" : "b-green");
+    $("fairness").textContent = d.fairness.is_fair ? "FAIR — " + (d.fairness.reasons.join("; ") || "policy satisfied") : "UNFAIR — " + (d.fairness.reasons.join("; ") || "policy violated");
+    $("scoreMeta").textContent = d.scenario_name + " · model " + trunc(d.model_info.model_hash, 14) + " · v" + (d.model_info.model_version || "?") + " · " + d.elapsed_ms + " ms";
+    renderShap(d.features, d.base_value, d.score);
+    $("shapMeta").textContent = "SHAP " + (d.provenance.shap_version || "?") + " · background " + trunc(d.provenance.background_hash, 14);
+    renderCommitments(d.commitments);
+    renderProof(d.proof);
+    $("publicInputs").textContent = (d.public_inputs || []).map((v, i) => "in[" + i + "] = " + trunc(v, 40)).join("\n") || "—";
+    $("provenance").textContent = "circuit " + trunc(d.provenance.circuit_hash, 16) + " · model " + trunc(d.provenance.model_hash, 16) + " · training " + trunc(d.provenance.training_data_hash, 14) + " · " + (d.provenance.fips || "FIPS-140-3");
+    const vb = $("verified");
+    vb.textContent = d.verified ? "✓ VERIFIED — proof is cryptographically valid" : "FAILED — proof rejected";
+    vb.className = "verified-box " + (d.verified ? "" : "fail");
+    $("verifyMeta").textContent = "snarkjs groth16 verify against real verification key · " + d.verify_ms + " ms";
+    const oc = d.onchain || {};
+    const vAddr = oc.verifier_address || "—";
+    const vLink = oc.explorer ? '<a href="' + oc.explorer + '" target="_blank" rel="noopener" style="color:var(--accent)">' + vAddr + " ↗</a>" : vAddr;
+    $("onchain").innerHTML =
+      '<div class="proof-point"><b>on-chain:</b> ' + (oc.verified_onchain ? "TRUE — Groth16Verifier.verifyProof passed" : "not verified") + "</div>" +
+      '<div class="proof-point"><b>verifier:</b> ' + vLink + "</div>" +
+      '<div class="proof-point"><b>chain:</b> ' + (oc.chain_id || "—") + "</div>";
+    const tv = d.trans_verify || {};
+    $("transVerify").innerHTML =
+      '<div class="proof-point"><b>explanation anchored:</b> ' + (tv.anchored_ok ? "TRUE — recomputed SHA-256 matches" : "MISMATCH — tampered or stale") + "</div>" +
+      '<div class="proof-point"><b>combined commitment:</b> ' + trunc(tv.combined_commitment || "", 20) + "</div>" +
+      '<div class="proof-point"><b>scope:</b> displayed SHAP ⟷ combined ⟷ record ⟷ on-chain Groth16 (public inputs do not cover SHAP)</div>';
+    $("status").textContent = "done in " + (d.elapsed_ms + d.verify_ms) + " ms";
+  } catch (e) {
+    $("errBox").innerHTML = '<div class="panel full"><div class="error-box">' + e.message + "</div></div>";
+  } finally {
+    btn.disabled = false;
+    $("spinner").style.display = "none";
+  }
+}
+
+$("run").addEventListener("click", run);
+loadScenarios().then(run);
+</script>
+</body>
+</html>
