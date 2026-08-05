@@ -1,5 +1,6 @@
 import React, { memo, useRef, useEffect, useState, useMemo } from 'react';
 import * as d3 from 'd3';
+import ConceptPreviewBanner from './ConceptPreviewBanner';
 
 const FEATURE_LABELS = [
   'input_count', 'output_count', 'amount_btc', 'fee_rate',
@@ -257,6 +258,9 @@ function NeuralNetwork({ shapValues = {}, riskScore = 0, width = 700, height = 5
       overflow: 'hidden',
       position: 'relative',
     }}>
+      <div style={{ padding: '8px' }}>
+        <ConceptPreviewBanner label="Neural Inference Topology" />
+      </div>
       <div style={{
         padding: '10px 16px',
         borderBottom: '1px solid rgba(0,255,255,0.1)',

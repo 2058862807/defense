@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ConceptPreviewBanner from './ConceptPreviewBanner';
 
 const styles = {
   container: {
@@ -582,6 +583,7 @@ export default function ToolDemoStudio() {
         {/* 5. GNN FRAUD RINGS */}
         {selectedTool === 'gnn' && (
           <>
+            <ConceptPreviewBanner label="GNN Fraud Ring Investigator" />
             <div style={styles.cardTitle}>
               <span>🕸 GNN Fraud Ring Investigator</span>
               <span style={styles.badge('#ff0055')}>{detectedRings.length} RINGS FLAGGED</span>
@@ -614,6 +616,7 @@ export default function ToolDemoStudio() {
         {/* 6. QRNG HARDWARE STREAM */}
         {selectedTool === 'qrng' && (
           <>
+            <ConceptPreviewBanner label="QRNG Quantum Seed Generator" />
             <div style={styles.cardTitle}>
               <span>⚛ QRNG Quantum Seed Generator</span>
               <span style={styles.badge('#00ff88')}>NIST SP 800-22 PASSED</span>

@@ -41,6 +41,7 @@ contract FairnessRegistry {
     mapping(address => bool) public revokedSubmitters;
     IZKVerifier public zkVerifier;
     address public owner;
+    address public pendingOwner;
 
     event FairnessSubmitted(
         bytes32 indexed inputCommitment,
@@ -56,6 +57,8 @@ contract FairnessRegistry {
     event SubmitterAuthorized(address indexed submitter);
     event SubmitterRevoked(address indexed submitter);
     event VerifierUpdated(address indexed oldVerifier, address indexed newVerifier);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Only owner");
@@ -96,6 +99,28 @@ contract FairnessRegistry {
         revokedSubmitters[submitter] = true;
         authorizedSubmitters[submitter] = false;
         emit SubmitterRevoked(submitter);
+    }
+
+    /**
+     * Two-step ownership transfer (Ownable2Step-shaped): the new owner must
+     * explicitly accept, so a typo'd/unreachable address can't brick control
+     * of the registry. Intended use: transfer to a TimelockController whose
+     * proposer/executor roles are held by a Safe multisig, so no single key
+     * can change setVerifier/authorizeSubmitter/revokeSubmitter unilaterally
+     * or without a delay - see docs/FAIRNESS_REGISTRY_GOVERNANCE_MIGRATION.md.
+     */
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "New owner cannot be zero");
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        require(msg.sender == pendingOwner, "Not pending owner");
+        address old = owner;
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(old, owner);
     }
 
     /**

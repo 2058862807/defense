@@ -6,6 +6,10 @@ circuits/build/
 circuits/*/build/
 **/build/
 node_modules/
+
+# Foundry - installed via `forge install`, not vendored (see docs/DEVELOPER.md)
+lib/
+cache/
 __pycache__/
 *.pyc
 .pytest_cache/

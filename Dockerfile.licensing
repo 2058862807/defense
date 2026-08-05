@@ -9,7 +9,7 @@ WORKDIR /app
 
 COPY requirements.enterprise.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.enterprise.txt && \
+    pip install --no-cache-dir --require-hashes -r requirements.enterprise.txt && \
     pip install --no-cache-dir prometheus-client hvac
 
 COPY app/ app/

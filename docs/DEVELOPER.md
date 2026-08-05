@@ -23,10 +23,11 @@ cd defense
 cp .env.example .env
 # Fill dev credentials - .env.example has dev defaults that work without Vault
 
-# Install Python deps with hashes (gov standard)
+# Install Python deps with hashes (gov standard). A hash mismatch must fail
+# here, not silently fall back to an unverified install.
 pip install pip-tools
 pip-compile --generate-hashes requirements.in -o requirements.enterprise.txt
-pip install --require-hashes -r requirements.enterprise.txt || pip install -r requirements.enterprise.txt
+pip install --require-hashes -r requirements.enterprise.txt
 
 # Install JS deps for ZK
 npm init -y
@@ -36,6 +37,18 @@ npm install snarkjs@0.7.4 circomlib circomlibjs
 curl -L https://github.com/iden3/circom/releases/download/v2.1.6/circom-linux-amd64 -o /tmp/circom
 chmod +x /tmp/circom
 sudo mv /tmp/circom /usr/local/bin/circom
+
+# Solidity tests (contracts/, test/solidity/) - install Foundry, then deps into lib/
+curl -L https://foundry.paradigm.xyz | bash && foundryup
+forge install OpenZeppelin/openzeppelin-contracts@v5.1.0 --no-commit
+forge install foundry-rs/forge-std --no-commit
+forge test
+
+# Install the pre-commit hook that blocks real signing keys from being
+# committed in a .env-pattern file (see scripts/check_no_secrets_staged.sh).
+# CI also runs this check as a backstop in case the hook is skipped.
+pip install pre-commit
+pre-commit install
 ```
 
 ---

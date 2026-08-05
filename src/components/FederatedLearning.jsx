@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import ConceptPreviewBanner from './ConceptPreviewBanner';
 
 const styles = {
   container: {
@@ -113,6 +114,7 @@ export default function FederatedLearning() {
 
   return (
     <div style={styles.container}>
+      <ConceptPreviewBanner label="Federated Learning" />
       {/* Header Banner */}
       <div style={{
         padding: '14px 20px',

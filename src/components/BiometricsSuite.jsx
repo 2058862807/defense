@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ConceptPreviewBanner from './ConceptPreviewBanner';
 
 // ── Style helper ─────────────────────────────────────────────────────────────
 const styles = {
@@ -244,6 +245,7 @@ export default function BiometricsSuite() {
 
   return (
     <div style={styles.container}>
+      <ConceptPreviewBanner label="Biometrics Suite" />
       {/* Top Banner */}
       <div style={{
         padding: '12px 20px',
