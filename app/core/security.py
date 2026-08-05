@@ -41,6 +41,32 @@ def get_secret_from_vault(vault_addr: str, role_id: str, secret_id: str, kv_path
     secret = client.secrets.kv.v2.read_secret_version(path=kv_path.replace("secret/data/","").replace("secret/",""), mount_point="secret")
     return secret["data"]["data"]
 
+def require_vault_or_fail(settings) -> None:
+    """Fail closed: in production, Vault must actually authenticate at boot,
+    not just have non-empty config values. Without this, a misconfigured
+    VAULT_ROLE_ID/VAULT_SECRET_ID only surfaces the first time something
+    tries to sign or read a secret - the process boots and serves traffic
+    in the meantime. Mirrors require_tls_or_fail's fail-closed contract.
+    """
+    if not settings.is_production():
+        return
+    try:
+        client = get_vault_client(
+            settings.vault_addr,
+            settings.vault_role_id,
+            settings.vault_secret_id.get_secret_value(),
+        )
+        authenticated = client.is_authenticated()
+    except Exception as exc:
+        raise RuntimeError(
+            "FAIL-CLOSED: Vault authentication failed at boot "
+            f"(vault_addr={settings.vault_addr}): {exc}"
+        ) from exc
+    if not authenticated:
+        raise RuntimeError(
+            f"FAIL-CLOSED: Vault client not authenticated at boot (vault_addr={settings.vault_addr})."
+        )
+
 # --- JWT RS256 via JWKS (never HS256 or 'none' in prod) ---
 _jwks_cache: Dict[str, PyJWKClient] = {}
 

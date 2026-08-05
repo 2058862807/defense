@@ -50,10 +50,14 @@ app = FastAPI(
 # Fail-closed TLS/mTLS material check (A2): refuses to boot when require_tls /
 # require_mtls_peer demand certs that are missing.
 from app.core.tls import require_tls_or_fail
+# Fail-closed Vault check: refuses to boot in production if Vault can't
+# actually authenticate, rather than only failing on the first sign attempt.
+from app.core.security import require_vault_or_fail
 
 @app.on_event("startup")
 async def _startup() -> None:
     require_tls_or_fail(settings)
+    require_vault_or_fail(settings)
     asyncio.create_task(_ensure_shared_mempool())
 
 # Security middleware - enterprise
