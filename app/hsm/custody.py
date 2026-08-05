@@ -316,6 +316,9 @@ def build_signing_backend() -> Tuple[SigningBackend, str]:
     """
     from app.core.config import settings
 
+    backend: Optional[SigningBackend] = None
+    custody_source: Optional[CustodySource] = None
+
     # 1. PKCS#11 hardware HSM
     if settings.pkcs11_lib and settings.hsm_token_label:
         try:
@@ -325,13 +328,13 @@ def build_signing_backend() -> Tuple[SigningBackend, str]:
                 os.getenv("HSM_SLOT_PIN", ""),
                 _expected_address(),
             )
+            custody_source = CustodySource.PKCS11_HSM
             logger.info("CUSTODY: hardware HSM (PKCS#11) backend active")
-            return (backend, CustodySource.PKCS11_HSM.value)
         except Exception as exc:
             logger.warning(f"CUSTODY: PKCS#11 backend unavailable ({exc})")
 
     # 2. Vault Transit
-    if os.getenv("VAULT_TRANSIT_KEY_NAME"):
+    if backend is None and os.getenv("VAULT_TRANSIT_KEY_NAME"):
         try:
             from app.core.security import get_vault_client
 
@@ -345,44 +348,42 @@ def build_signing_backend() -> Tuple[SigningBackend, str]:
                 os.getenv("VAULT_TRANSIT_KEY_NAME"),
                 _expected_address(),
             )
+            custody_source = CustodySource.VAULT_TRANSIT
             logger.info("CUSTODY: Vault Transit backend active")
-            return (backend, CustodySource.VAULT_TRANSIT.value)
         except Exception as exc:
             logger.warning(f"CUSTODY: Vault Transit backend unavailable ({exc})")
 
     # 3. Software custody - resolve the key via managed stores
-    from app.core.secrets_store import resolve_secret
+    if backend is None:
+        from app.core.secrets_store import resolve_secret
 
-    secret = resolve_secret(
-        settings.vault_kv_path_signer,
-        settings.vault_addr,
-        settings.vault_role_id,
-        settings.vault_secret_id.get_secret_value(),
-    )
-    if secret:
-        private_key = secret.get("private_key") or secret.get("evm_private_key")
-        if private_key:
-            return (
-                SoftwareSigningBackend(private_key, CustodySource.SOFTWARE_VAULT),
-                CustodySource.SOFTWARE_VAULT.value,
-            )
+        secret = resolve_secret(
+            settings.vault_kv_path_signer,
+            settings.vault_addr,
+            settings.vault_role_id,
+            settings.vault_secret_id.get_secret_value(),
+        )
+        if secret:
+            private_key = secret.get("private_key") or secret.get("evm_private_key")
+            if private_key:
+                custody_source = CustodySource.SOFTWARE_VAULT
+                backend = SoftwareSigningBackend(private_key, custody_source)
 
     # 3b. Pilot-store key - entered at runtime via the admin API so an operator
     #     can supply the gas wallet without a container restart.
-    from app.core.pilot_secrets import pilot_secrets
+    if backend is None:
+        from app.core.pilot_secrets import pilot_secrets
 
-    pilot_key = pilot_secrets.get("evm_private_key")
-    if pilot_key:
-        return (
-            SoftwareSigningBackend(pilot_key, CustodySource.SOFTWARE_ENV),
-            CustodySource.SOFTWARE_ENV.value,
-        )
+        pilot_key = pilot_secrets.get("evm_private_key")
+        if pilot_key:
+            custody_source = CustodySource.SOFTWARE_ENV
+            backend = SoftwareSigningBackend(pilot_key, custody_source)
 
     # 4. Environment key - explicitly software custody. Preserves current
     #    operational behavior (signing works today via env key) but is audited
     #    loudly so production operators see that custody is software until A1
     #    key rotation + hardware provisioning.
-    if settings.evm_private_key:
+    if backend is None and settings.evm_private_key:
         if settings.is_production():
             logger.error(
                 "CUSTODY: production signing with SOFTWARE custody (env key) - "
@@ -402,21 +403,25 @@ def build_signing_backend() -> Tuple[SigningBackend, str]:
                 )
             except Exception:
                 pass
-        return (
-            SoftwareSigningBackend(
-                settings.evm_private_key.get_secret_value(),
-                CustodySource.SOFTWARE_ENV,
-            ),
-            CustodySource.SOFTWARE_ENV.value,
+        custody_source = CustodySource.SOFTWARE_ENV
+        backend = SoftwareSigningBackend(
+            settings.evm_private_key.get_secret_value(),
+            custody_source,
         )
+
+    if backend is None or custody_source is None:
+        raise RuntimeError("no signing custody backend available")
 
     if settings.is_production() and settings.hsm_require_hardware:
-        raise RuntimeError(
-            "FAIL-CLOSED: no hardware custody backend available but "
-            "hsm_require_hardware=true in production"
-        )
+        if custody_source not in HARDWARE_CUSTODY:
+            raise RuntimeError(
+                "CUSTODY: hsm_require_hardware=true but resolved custody is "
+                f"'{custody_source.value}' - refusing to sign in production. "
+                "Configure the pilot's VAULT_ADDR/VAULT_ROLE_ID/VAULT_SECRET_ID "
+                "or PKCS#11 HSM before deploying."
+            )
 
-    raise RuntimeError("no signing custody backend available")
+    return (backend, custody_source.value)
 
 
 def _expected_address() -> str:

@@ -44,6 +44,10 @@ class E2ETestResults:
         self.tests.append({"name": name, "status": "FAIL", "error": error})
         print(f"  ✗ FAIL: {name} - {error}")
 
+    def record_skip(self, name: str, reason: str):
+        self.tests.append({"name": name, "status": "SKIP", "reason": reason})
+        print(f"  - SKIP: {name} - {reason}")
+
     def summary(self):
         total = self.passed + self.failed
         print("\n" + "="*60)
@@ -131,9 +135,13 @@ def test_mempool_scoring_pipeline():
 def test_offense_bot():
     """Test offense bot: scan -> score -> prove -> bundle"""
     print("\n[TEST] Offense Bot: scan -> score -> prove -> bundle")
+    from app.bots.offense_loader import load_offense_module, OffenseToolsUnavailable
     try:
-        from app.bots.offense_bot import OffenseBotEnterprise
-        
+        OffenseBotEnterprise = load_offense_module("bots.offense_bot").OffenseBotEnterprise
+    except OffenseToolsUnavailable as e:
+        results.record_skip("offense bot", str(e))
+        return True
+    try:
         bot = OffenseBotEnterprise()
         
         # 1. Scan - uses real Web3 calls, not random

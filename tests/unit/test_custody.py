@@ -98,7 +98,24 @@ def test_der_to_rs_roundtrip():
     assert r < SECP256k1.order and s < SECP256k1.order
 
 
-def test_build_signing_backend_dev_env():
+def test_build_signing_backend_dev_env(monkeypatch):
+    # hsm_require_hardware now defaults to True, so software/env-key custody
+    # (what this repo's .env is configured with) must be explicitly opted
+    # into for local/dev testing rather than being silently permitted.
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "hsm_require_hardware", False)
     backend, provider = build_signing_backend()
     assert backend.account_address()
     assert provider in {s.value for s in CustodySource}
+
+
+def test_build_signing_backend_fails_closed_without_hardware(monkeypatch):
+    """hsm_require_hardware=true in production must refuse to sign with
+    software/env-key custody, even if a key happens to be configured."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "hsm_require_hardware", True)
+    monkeypatch.setattr(settings, "env", "production")
+    with pytest.raises(RuntimeError, match="hsm_require_hardware=true"):
+        build_signing_backend()

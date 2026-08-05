@@ -190,8 +190,9 @@ async def _run_offense_trigger(focus: str) -> None:
         await _broadcast_bot_status(bot_trigger.state())
 
         def _worker():
-            from app.bots.offense_bot import OffenseBotEnterprise
+            from app.bots.offense_loader import load_offense_module
             import asyncio as _aio
+            OffenseBotEnterprise = load_offense_module("bots.offense_bot").OffenseBotEnterprise
             bot = OffenseBotEnterprise()
 
             async def _scan():
@@ -715,10 +716,15 @@ async def analyze(request: AnalyzeRequestEnterprise, background_tasks: Backgroun
 
 @app.post("/bot/offense/run")
 async def run_offense(background: BackgroundTasks, body: OffenseRunRequest, user=Depends(require_role("gov-admin", "operator"))):
+    import os
+    if not os.environ.get("PROTEAN_OFFENSE_TOOLS_PATH"):
+        raise HTTPException(503, "Offense bot unavailable: not part of this deployment (PROTEAN_OFFENSE_TOOLS_PATH not set)")
+
     async def _run():
         # Construct the bot inside the worker thread - its EVM/Vault setup does
         # blocking network I/O that must never touch the event loop.
-        from app.bots.offense_bot import OffenseBotEnterprise
+        from app.bots.offense_loader import load_offense_module
+        OffenseBotEnterprise = load_offense_module("bots.offense_bot").OffenseBotEnterprise
         bot = OffenseBotEnterprise()
         for _ in range(body.iterations):
             if body.focus in ("auto", "arbitrage"):
@@ -1054,7 +1060,11 @@ class SandwichDetectRequest(BaseModel):
 @app.post("/sandwich/detect")
 async def sandwich_detect(body: SandwichDetectRequest):
     """Real sandwich bracket detection for DEFENSIVE testing - blocked per policy."""
-    from app.bots.sandwich_detector import SandwichDetector
+    from app.bots.offense_loader import load_offense_module, OffenseToolsUnavailable
+    try:
+        SandwichDetector = load_offense_module("bots.sandwich_detector").SandwichDetector
+    except OffenseToolsUnavailable as e:
+        raise HTTPException(503, str(e))
 
     raw = live_store.get_raw_transaction(body.victim_tx_hash) if body.victim_tx_hash else None
     if not raw and body.victim_tx_hash:

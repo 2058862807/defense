@@ -228,7 +228,7 @@ class Settings(BaseSettings):
     securosys_api_url: Optional[str] = None
     securosys_auth_token: Optional[SecretStr] = None
     securosys_key_label: Optional[str] = None
-    hsm_require_hardware: bool = False
+    hsm_require_hardware: bool = True
     evm_signer_address: Optional[str] = None
 
     # Load Testing
@@ -274,8 +274,19 @@ try:
         assert settings.enable_pqc_encryption is True
         assert settings.jwt_algorithm in ("RS256","ES256"), "Only RS256/ES256 allowed in prod"
 except ValidationError as e:
-    # In dev, allow creation with mock required fields if .env.example not filled
-    # But log as error for operator
+    # Fail closed: missing required secrets must stop the app, not silently
+    # boot into a mode where gov-admin endpoints auto-authenticate. Dev mode
+    # is opt-in only, via ALLOW_DEV_MODE=true.
+    if os.environ.get("ALLOW_DEV_MODE", "").strip().lower() != "true":
+        print(f"[FATAL] Configuration validation failed and ALLOW_DEV_MODE is not set: {e}")
+        print("[FATAL] Refusing to start with mock/dev secrets. Set required secrets "
+              "(JWT_JWKS_URL, ZK_PROVER_URL, VAULT_ADDR, etc.) or explicitly set "
+              "ALLOW_DEV_MODE=true for local development only.")
+        raise
+    print("=" * 70)
+    print("[!] ALLOW_DEV_MODE=true - starting with MOCK/DEV secrets.")
+    print("[!] gov-admin auth will auto-authenticate. NEVER set this in prod/pilot.")
+    print("=" * 70)
     print(f"[!] Configuration validation failed (expected in dev without secrets): {e}")
     # Fallback for local dev/test without secrets - but will NOT be used if env=production with missing secrets
     # Create minimal dev settings that still enforce structure

@@ -15,19 +15,17 @@ RUN git clone https://github.com/open-quantum-safe/liboqs.git && \
 
 # Enforce hash-pinned deps
 WORKDIR /app
-COPY requirements.hardened.txt requirements.hardened.txt
-COPY protean-shapes-prod/app app
-COPY protean-shapes-prod/contracts contracts
-COPY protean-shapes-prod/scripts scripts
+COPY requirements.enterprise.txt requirements.enterprise.txt
+COPY app app
+COPY contracts contracts
+COPY scripts scripts
+COPY circuits circuits
+COPY models models
 
 # Install with --require-hashes if available (production defense)
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --require-hashes -r requirements.hardened.txt || \
-    pip install --no-cache-dir -r requirements.hardened.txt
-
-# Copy full production package
-COPY protean-shapes-prod/ /app/protean-shapes-prod/
-COPY protean-shapes-prod/app /app/app
+    pip install --no-cache-dir --require-hashes -r requirements.enterprise.txt || \
+    pip install --no-cache-dir -r requirements.enterprise.txt
 WORKDIR /app
 
 # PQC lib path locked, not via LD_LIBRARY_PATH override

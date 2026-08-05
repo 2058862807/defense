@@ -15,7 +15,6 @@ resources:
   - operator/deployment.yaml
   - api/api.yaml
   - zk-prover/zk-prover.yaml
-  - offense-bot/offense-bot.yaml
   - defense-bot/defense-bot.yaml
   - regulatory/regulatory.yaml
   - ml-scorer/ml-scorer.yaml

@@ -208,7 +208,11 @@ async def submit_mev_opportunity(req: MEVOpportunityRequest, user=Depends(get_cu
     - Checks fairness via ZK circuit
     - If fair, builds bundle and sends via Flashbots
     """
-    from app.bots.offense_bot import OffenseBotEnterprise
+    from app.bots.offense_loader import load_offense_module, OffenseToolsUnavailable
+    try:
+        OffenseBotEnterprise = load_offense_module("bots.offense_bot").OffenseBotEnterprise
+    except OffenseToolsUnavailable as e:
+        raise HTTPException(503, str(e))
 
     bot = OffenseBotEnterprise()
 
