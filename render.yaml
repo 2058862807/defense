@@ -1,31 +1,48 @@
 # Render Blueprint - PROTEAN DEFENSE free-tier testing deployment.
 #
-# Deploys two free web services from this repo:
-#   1. Backend  - Python FastAPI (real ML + ZK WASM/ZKEY + OFAC/FATF)
-#   2. Frontend - Node gateway serving the React build and proxying to backend
+# Two PUBLIC web services (free tier). Render gives free instances only to web
+# services / static sites / Postgres / KV - private services (pserv) start at
+# $7/mo, so the backend cannot be a pserv on the free plan.
+#   1. protean-defense-backend  - Python FastAPI (ML + ZK + OFAC/FATF)
+#   2. protean-defense-frontend - Node gateway serving React + proxying /api/*
+#                                and /ws/dashboard to the backend
 #
-# How to deploy:
-#   - Push this branch to GitHub, then in the Render dashboard:
-#     New -> Blueprint -> select the repo (or paste render.yaml on import).
-#   - Both services start in dev mode (ENV=dev) with the free public Node RPC
-#     so real mainnet mempool txs stream into the dashboard. No Vault/HSM.
+# Fields are explicit so they show up correctly in the Render dashboard:
+#   type, branch (master is this repo's default branch), runtime, buildCommand,
+#   startCommand.
 #
-# Free-tier caveats:
-#   - Instances sleep after 15 min idle; first request can take ~30-60s cold
-#     start (backends imports xgboost/shap/snarkjs).
-#   - Two free services = 2 x instance-hours; 750 hrs/month budget shared.
-#   - If you rename a service, update PYTHON_API_URL / PYTHON_WS_URL below to
-#     match the new onrender.com hostname.
+# Security note: ENV=dev puts the backend in dev mode where unauthenticated
+# requests auto-authenticate as gov-admin. A PUBLIC backend means /analyze,
+# /kms/rotate, /bot/*, /ledger/* are reachable by anyone. Fine for throwaway
+# testing only - never point real secrets here.
 
 services:
+  # ---------------------------------------------------------------------------
+  # Backend - Python FastAPI on Render's native Python runtime.
+  # The requirements lock is compiled for CPython 3.11, so PYTHON_VERSION is
+  # pinned to 3.11.9. Node 20 + snarkjs (real Groth16 proofs) are installed
+  # during build into the repo dir (.deploy/, node_modules/) so they persist to
+  # the runtime image, and startCommand puts them on PATH for
+  # app/zk/snarkjs.py's resolver (shutil.which + node_modules/.bin fallback).
+  # ---------------------------------------------------------------------------
   - type: web
     name: protean-defense-backend
-    runtime: docker
-    dockerfilePath: ./render/backend.Dockerfile
+    runtime: python
+    branch: master
     plan: free
+    region: oregon
     autoDeploy: true
     healthCheckPath: /health
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.enterprise.txt
+      mkdir -p .deploy
+      curl -fsSL https://nodejs.org/dist/v20.19.0/node-v20.19.0-linux-x64.tar.xz | tar -xJ -C .deploy --strip-components=1
+      PATH="$PWD/.deploy/bin:$PATH" npm install --no-save --no-package-lock --no-audit --no-fund snarkjs
+    startCommand: export PATH="$PWD/.deploy/bin:$PWD/node_modules/.bin:$PATH" && uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
       - key: ENV
         value: dev
       # Render hostnames are *.onrender.com - trusted for Host-header checks.
@@ -58,8 +75,7 @@ services:
         value: https://ethereum.publicnode.com
       - key: EVM_WS_URL
         value: wss://ethereum.publicnode.com
-      # Throwaway dev signer (anvil key #0) so /health custody check resolves
-      # fast without Vault. Never fund this account; testnet keys only.
+      # Throwaway dev signer (anvil key #0) so /health custody resolves fast.
       - key: EVM_PRIVATE_KEY
         value: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       - key: EVM_SIGNER_ADDRESS
@@ -69,14 +85,26 @@ services:
       - key: ENABLE_PQC_ENCRYPTION
         value: "false"
 
+  # ---------------------------------------------------------------------------
+  # Frontend - Node gateway + Vite production build on Render's native Node
+  # runtime. NODE_ENV=production is set, so `npm ci --include=dev` is required
+  # at build time (Vite/esbuild are devDeps). server.ts only needs Vite in dev;
+  # the prod server.cjs bundle no longer imports Vite, so a pruned runtime is
+  # fine. Vite 8 needs Node >= 22.12, hence NODE_VERSION is pinned.
+  # ---------------------------------------------------------------------------
   - type: web
     name: protean-defense-frontend
-    runtime: docker
-    dockerfilePath: ./render/frontend.Dockerfile
+    runtime: node
+    branch: master
     plan: free
+    region: oregon
     autoDeploy: true
     healthCheckPath: /api/webmaster/health
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
     envVars:
+      - key: NODE_VERSION
+        value: "22.12.0"
       - key: NODE_ENV
         value: production
       - key: PYTHON_API_URL

@@ -5,7 +5,6 @@ import https from "https";
 import { createServer as createHttpServer } from "http";
 import { createServer as createHttpsServer } from "https";
 import { WebSocketServer, WebSocket } from "ws";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
 
 // Minimal real .env loader (no dependency needed) - never overrides process env.
@@ -552,6 +551,10 @@ async function startServer() {
 
   // Vite middleware for development or static file server for production
   if (process.env.NODE_ENV !== "production") {
+    // Dynamic import: Vite is a devDependency and must not be resolved by the
+    // production bundle (esbuild --packages=external). This branch only runs in
+    // dev mode, where vite is always installed.
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
