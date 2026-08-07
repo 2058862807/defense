@@ -226,7 +226,7 @@ class EnterpriseTrainingPipeline:
         """
         Full enterprise training pipeline - real data, no random
         """
-        print("=== PROTEAN SHAPES Enterprise Training Pipeline - Real Historical Data ===")
+        print("=== PROTEAN DEFENSE Enterprise Training Pipeline - Real Historical Data ===")
         
         # Determine block range - recent 10k blocks for gov standard
         if not to_block:

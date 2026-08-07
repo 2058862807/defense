@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import RiskGauge from './RiskGauge';
 import ShapPanel from './ShapPanel';
-import SsafWave from './SsafWave';
+import CompositeRiskFusionWave from './CompositeRiskFusionWave';
 
 function shortHash(hash) {
   if (!hash) return '0x0000...0000';
@@ -11,7 +11,7 @@ function shortHash(hash) {
 }
 
 export default function ProteanDefaultView({ data = {}, isLive }) {
-  const { transactions = [], metrics = {}, ssafData = {} } = data || {};
+  const { transactions = [], metrics = {}, compositeRiskFusionData = {} } = data || {};
 
   // Header mode toggle
   const [mode, setMode] = useState('LIVE'); // 'LIVE' | 'SIMULATED'
@@ -761,18 +761,18 @@ export default function ProteanDefaultView({ data = {}, isLive }) {
             </div>
           </div>
 
-          {/* Section: SSAF Status */}
+          {/* Section: COMPOSITE_RISK_FUSION Status */}
           <div style={{ background: 'rgba(0,0,0,0.3)', padding: '10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <div style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--neon-cyan)', letterSpacing: '1px', display: 'flex', justifyContent: 'space-between' }}>
-              <span>〰 SSAF STATUS</span>
-              <span style={{ color: '#00ff88', fontSize: '9px' }}>{ssafData.mode}</span>
+              <span>〰 COMPOSITE_RISK_FUSION STATUS</span>
+              <span style={{ color: '#00ff88', fontSize: '9px' }}>{compositeRiskFusionData.mode}</span>
             </div>
 
-            <SsafWave ssafData={ssafData} />
+            <CompositeRiskFusionWave compositeRiskFusionData={compositeRiskFusionData} />
 
             <div style={{ fontSize: '10px', color: '#94a3b8', display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
-              <div>Total Triggers: <span style={{ color: '#fff' }}>{ssafData.total_triggers || 0}</span></div>
-              <div>Consecutive Blind: <span style={{ color: '#fff' }}>{ssafData.consecutive_blind || 0}</span></div>
+              <div>Total Triggers: <span style={{ color: '#fff' }}>{compositeRiskFusionData.total_triggers || 0}</span></div>
+              <div>Consecutive Blind: <span style={{ color: '#fff' }}>{compositeRiskFusionData.consecutive_blind || 0}</span></div>
             </div>
           </div>
 

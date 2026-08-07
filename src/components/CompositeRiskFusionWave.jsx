@@ -31,7 +31,7 @@ const MODE_CONFIG = {
     label: 'ATTRIBUTION-BLIND MODE',
     subtitle: 'Chaotic scanning — maximum entropy',
   },
-  NO_SSAF: {
+  NO_COMPOSITE_RISK_FUSION: {
     color: '#00cc66',
     waveColor1: '#00cc66',
     waveColor2: '#00cc66',
@@ -63,7 +63,7 @@ function generateWavePoints(width, height, config, time) {
 }
 
 function WavePath({ width, height, mode, time }) {
-  const config = MODE_CONFIG[mode] || MODE_CONFIG.NO_SSAF;
+  const config = MODE_CONFIG[mode] || MODE_CONFIG.NO_COMPOSITE_RISK_FUSION;
   const points = useMemo(() => generateWavePoints(width, height, config, time), [width, height, config, time]);
 
   const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
@@ -114,11 +114,11 @@ function WavePath({ width, height, mode, time }) {
   );
 }
 
-function SsafWave({ ssafData = { mode: 'NO_SSAF', magnitude: 0, score: 0 } }) {
+function CompositeRiskFusionWave({ compositeRiskFusionData = { mode: 'NO_COMPOSITE_RISK_FUSION', magnitude: 0, score: 0 } }) {
   const containerRef = React.useRef(null);
   const [dimensions, setDimensions] = React.useState({ width: 600, height: 200 });
   const [time, setTime] = React.useState(0);
-  const mode = ssafData.mode || 'NO_SSAF';
+  const mode = compositeRiskFusionData.mode || 'NO_COMPOSITE_RISK_FUSION';
 
   // Handle resize
   React.useEffect(() => {
@@ -147,7 +147,7 @@ function SsafWave({ ssafData = { mode: 'NO_SSAF', magnitude: 0, score: 0 } }) {
     return () => { clearInterval(id); running = false; };
   }, []);
 
-  const config = MODE_CONFIG[mode] || MODE_CONFIG.NO_SSAF;
+  const config = MODE_CONFIG[mode] || MODE_CONFIG.NO_COMPOSITE_RISK_FUSION;
 
   return (
     <div
@@ -227,7 +227,7 @@ function SsafWave({ ssafData = { mode: 'NO_SSAF', magnitude: 0, score: 0 } }) {
             opacity: 0.5,
             letterSpacing: 1,
           }}>
-            MAG: {(ssafData.magnitude || 0).toFixed(2)}
+            MAG: {(compositeRiskFusionData.magnitude || 0).toFixed(2)}
           </span>
           <span style={{
             color: config.color,
@@ -236,7 +236,7 @@ function SsafWave({ ssafData = { mode: 'NO_SSAF', magnitude: 0, score: 0 } }) {
             opacity: 0.5,
             letterSpacing: 1,
           }}>
-            SCORE: {(ssafData.score || 0).toFixed(1)}
+            SCORE: {(compositeRiskFusionData.score || 0).toFixed(1)}
           </span>
         </div>
       </div>
@@ -256,4 +256,4 @@ function SsafWave({ ssafData = { mode: 'NO_SSAF', magnitude: 0, score: 0 } }) {
   );
 }
 
-export default memo(SsafWave);
+export default memo(CompositeRiskFusionWave);
