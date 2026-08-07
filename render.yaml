@@ -1,0 +1,87 @@
+# Render Blueprint - PROTEAN DEFENSE free-tier testing deployment.
+#
+# Deploys two free web services from this repo:
+#   1. Backend  - Python FastAPI (real ML + ZK WASM/ZKEY + OFAC/FATF)
+#   2. Frontend - Node gateway serving the React build and proxying to backend
+#
+# How to deploy:
+#   - Push this branch to GitHub, then in the Render dashboard:
+#     New -> Blueprint -> select the repo (or paste render.yaml on import).
+#   - Both services start in dev mode (ENV=dev) with the free public Node RPC
+#     so real mainnet mempool txs stream into the dashboard. No Vault/HSM.
+#
+# Free-tier caveats:
+#   - Instances sleep after 15 min idle; first request can take ~30-60s cold
+#     start (backends imports xgboost/shap/snarkjs).
+#   - Two free services = 2 x instance-hours; 750 hrs/month budget shared.
+#   - If you rename a service, update PYTHON_API_URL / PYTHON_WS_URL below to
+#     match the new onrender.com hostname.
+
+services:
+  - type: web
+    name: protean-defense-backend
+    runtime: docker
+    dockerfilePath: ./render/backend.Dockerfile
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: ENV
+        value: dev
+      # Render hostnames are *.onrender.com - trusted for Host-header checks.
+      - key: ALLOWED_HOSTS
+        value: "*.onrender.com"
+      # Non-production so Vault/HSM fail-closed gates are skipped at boot.
+      - key: JWT_JWKS_URL
+        value: https://auth.dev.protean.sh/.well-known/jwks.json
+      - key: VAULT_ADDR
+        value: https://127.0.0.1:8200
+      - key: VAULT_ROLE_ID
+        value: dev-role
+      - key: VAULT_SECRET_ID
+        value: dev-secret
+      - key: FAIRNESS_REGISTRY_ADDRESS
+        value: 0x0000000000000000000000000000000000000000
+      - key: FAIRNESS_VERIFIER_ADDRESS
+        value: 0x0000000000000000000000000000000000000000
+      # Real SLSA artifact hash from circuits/final_artifacts/combined.hash.
+      - key: ZK_CIRCUIT_HASH
+        value: d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41
+      - key: ZK_CIRCUIT_PATH_WASM
+        value: circuits/final_artifacts/fairness_policy.wasm
+      - key: ZK_CIRCUIT_PATH_ZKEY
+        value: circuits/final_artifacts/fairness_policy_final.zkey
+      - key: ZK_VERIFICATION_KEY_PATH
+        value: circuits/final_artifacts/verification_key.json
+      # Real mainnet public RPC/WS (free, no key) for the mempool listener.
+      - key: EVM_RPC_URL
+        value: https://ethereum.publicnode.com
+      - key: EVM_WS_URL
+        value: wss://ethereum.publicnode.com
+      # Throwaway dev signer (anvil key #0) so /health custody check resolves
+      # fast without Vault. Never fund this account; testnet keys only.
+      - key: EVM_PRIVATE_KEY
+        value: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      - key: EVM_SIGNER_ADDRESS
+        value: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+      - key: HSM_REQUIRE_HARDWARE
+        value: "false"
+      - key: ENABLE_PQC_ENCRYPTION
+        value: "false"
+
+  - type: web
+    name: protean-defense-frontend
+    runtime: docker
+    dockerfilePath: ./render/frontend.Dockerfile
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /api/webmaster/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PYTHON_API_URL
+        value: https://protean-defense-backend.onrender.com
+      - key: PYTHON_WS_URL
+        value: wss://protean-defense-backend.onrender.com/ws/dashboard
+      - key: GEMINI_API_KEY
+        sync: false

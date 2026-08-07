@@ -15,6 +15,7 @@ from typing import Dict, Any, Literal, Optional
 import logging
 import time
 import asyncio
+import os
 from prometheus_client import Counter, Histogram, make_asgi_app
 
 from app.core.config import settings
@@ -68,6 +69,12 @@ allowed_hosts = ["app.protean.sh", "api.protean.sh", "*.protean.sh"]
 if settings.env in ["dev", "staging"] or not settings.is_production():
     allowed_hosts.append("testserver")
 allowed_hosts.extend(["testserver", "localhost", "127.0.0.1", "0.0.0.0"])
+# Extra trusted Host headers for hosted/PaaS deployments (e.g. Render free tier
+# assigns *.onrender.com hostnames). Kept env-driven so on-prem still fails
+# closed on unknown Host headers - only explicitly approved hosts are added.
+allowed_hosts.extend(
+    h.strip() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()
+)
 
 app.add_middleware(
     CORSMiddleware,
