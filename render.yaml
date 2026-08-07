@@ -1,0 +1,276 @@
+# Render Free Tier Deployment - PROTEAN DEFENSE
+# https://render.com/docs/infrastructure-as-code
+# Free Tier: 750 hours/month Web Services (512MB RAM, sleeps after 15m), PostgreSQL 90 days free then $7/mo 1GB, Redis via Upstash Marketplace 10k commands/day free, Cron Jobs free
+
+services:
+  # --- API Service (Main FastAPI) - 7 microservices, but Render free tier limited to 750 hrs/month per service, so we combine some ---
+  - type: web
+    name: protean-api
+    runtime: python
+    plan: free
+    region: oregon  # Free tier available in Oregon, Frankfurt, Singapore
+    branch: master
+    buildCommand: pip install -r requirements.enterprise.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHONPATH
+        value: /opt/render/project/src
+      - key: LOG_LEVEL
+        value: INFO
+      - key: JWT_JWKS_URL
+        fromService:
+          type: web
+          name: protean-api
+          property: host
+          # In real, would be https://auth.protean.sh/.well-known/jwks.json from Vault
+      - key: EVM_RPC_URL
+        sync: false  # Set manually in Render dashboard: https://ethereum.publicnode.com free public
+      - key: EVM_WS_URL
+        sync: false  # wss://ethereum.publicnode.com free public
+      - key: ZK_CIRCUIT_HASH
+        value: f4f96c2ddd7a11e453fc60705bb13fb748e91e2a32726f6639c2276a370140a8
+      - key: ZK_MODE
+        value: production
+      - key: ENABLE_PQC_ENCRYPTION
+        value: true
+      - key: REQUIRE_ZK_PROOF
+        value: false  # Free tier: allow fallback, prod would be true with real prover
+      - key: QRYPT_API_TOKEN
+        sync: false  # Free tier 1k/day from https://qrypt.com/
+      - key: REDIS_URL
+        fromService:
+          type: pserv  # Actually Redis via Upstash, but we'll use internal
+          name: protean-redis
+          property: connectionString
+      - key: POSTGRES_URL
+        fromDatabase:
+          name: protean-postgres
+          property: connectionString
+      - key: KAFKA_BROKERS
+        value: ""  # Kafka not available on Render free tier, uses in-memory fallback
+
+  # --- Frontend - React Vite ---
+  - type: web
+    name: protean-frontend
+    runtime: node
+    plan: free
+    region: oregon
+    branch: master
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    staticPublishPath: ./dist
+    envVars:
+      - key: NODE_VERSION
+        value: 20.20.2
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: protean-api
+          property: host
+      - key: REACT_APP_API_URL
+        fromService:
+          type: web
+          name: protean-api
+          property: host
+      - key: REACT_APP_CONNECTOR_URL
+        fromService:
+          type: web
+          name: protean-connector
+          property: host
+      - key: PORT
+        value: 10000  # Render expects PORT env var
+
+  # --- ZK Prover Service ---
+  - type: web
+    name: protean-zk-prover
+    runtime: python
+    plan: free
+    region: oregon
+    branch: master
+    buildCommand: pip install -r requirements.enterprise.txt
+    startCommand: python -m app.zk.prover --server --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: ENV
+        value: production
+      - key: ZK_MODE
+        value: production
+
+  # --- Regulatory + Compliance Service ---
+  - type: web
+    name: protean-regulatory
+    runtime: python
+    plan: free
+    region: oregon
+    branch: master
+    buildCommand: pip install -r requirements.enterprise.txt
+    startCommand: uvicorn app.regulatory.api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENV
+        value: production
+      - key: OFAC_FEED_URL
+        value: https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.CSV
+      - key: FATF_FEED_URL
+        value: https://www.fatf-gafi.org/en/publications/High-risk-and-other-monitored-jurisdictions.html
+      - key: REDIS_URL
+        fromService:
+          type: pserv
+          name: protean-redis
+          property: connectionString
+
+  # --- ML Scorer Service ---
+  - type: web
+    name: protean-ml-scorer
+    runtime: python
+    plan: free
+    region: oregon
+    branch: master
+    buildCommand: pip install -r requirements.enterprise.txt
+    startCommand: python -m app.ml.scorer --server --port $PORT
+    envVars:
+      - key: MODEL_PATH
+        value: /opt/render/project/src/models/xgboost_protean_v2.joblib
+      - key: SHAP_BACKGROUND
+        value: /opt/render/project/src/models/shap_background.npy
+
+  # --- Connector Service ---
+  - type: web
+    name: protean-connector
+    runtime: python
+    plan: free
+    region: oregon
+    branch: master
+    buildCommand: pip install -r requirements.enterprise.txt
+    startCommand: uvicorn app.connectors.enterprise_connector:connector_app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENV
+        value: production
+      - key: LICENSE_SERVER_URL
+        fromService:
+          type: web
+          name: protean-licensing
+          property: host
+
+  # --- Licensing Service ---
+  - type: web
+    name: protean-licensing
+    runtime: python
+    plan: free
+    region: oregon
+    branch: master
+    buildCommand: pip install -r requirements.enterprise.txt
+    startCommand: uvicorn app.licensing.server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENV
+        value: production
+      - key: LICENSE_PUBKEY_PATH
+        value: /opt/render/project/src/licenses/licensing_pubkey.pem
+
+  # --- Offense Bot - Background Worker (Free tier web service that sleeps, but for demo we use web type) ---
+  - type: web
+    name: protean-offense-bot
+    runtime: python
+    plan: free
+    region: oregon
+    branch: master
+    buildCommand: pip install -r requirements.enterprise.txt
+    startCommand: python -m app.bots.offense_bot --iterations 1000
+    envVars:
+      - key: ENV
+        value: production
+      - key: BOT_MODE
+        value: offense
+      - key: EVM_RPC_URL
+        sync: false
+      - key: EVM_WS_URL
+        sync: false  # wss://ethereum.publicnode.com free public
+
+  # --- Defense Bot - Background Worker ---
+  - type: web
+    name: protean-defense-bot
+    runtime: python
+    plan: free
+    region: oregon
+    branch: master
+    buildCommand: pip install -r requirements.enterprise.txt
+    startCommand: python -m app.bots.defense_bot --iterations 1000
+    envVars:
+      - key: ENV
+        value: production
+      - key: BOT_MODE
+        value: defense
+      - key: REDIS_URL
+        fromService:
+          type: pserv
+          name: protean-redis
+          property: connectionString
+
+  # --- Cron Job - Compliance Feed Update Daily 2 AM UTC (Free Tier) ---
+  - type: cron
+    name: compliance-feed-update
+    runtime: python
+    plan: free
+    region: oregon
+    branch: master
+    schedule: "0 2 * * *"  # Daily 2 AM UTC
+    buildCommand: pip install -r requirements.enterprise.txt
+    startCommand: python -m app.compliance.service --refresh-all
+    envVars:
+      - key: ENV
+        value: production
+      - key: REDIS_URL
+        fromService:
+          type: pserv
+          name: protean-redis
+          property: connectionString
+
+  # --- Cron Job - Load Testing (Free Tier) ---
+  - type: cron
+    name: load-test-daily
+    runtime: python
+    plan: free
+    region: oregon
+    branch: master
+    schedule: "0 3 * * *"  # Daily 3 AM UTC
+    buildCommand: pip install -r requirements.enterprise.txt && pip install locust
+    startCommand: python scripts/load_test.py --host https://protean-api.onrender.com --tps 1000 --duration 30 --test ingestion
+
+# Databases - Free Tier (PostgreSQL 90 days free, then $7/mo 1GB)
+databases:
+  - name: protean-postgres
+    plan: free
+    region: oregon
+    databaseName: protean
+    user: protean
+    ipAllowList: []  # Allow all IPs for free tier, in prod would restrict
+
+# Private Services - Redis (Free Tier via Upstash Marketplace, 10k commands/day)
+# Note: Render Free Tier Redis is via Upstash, not native private service type pserv for free
+# For free tier testing, we use in-memory fallback if Upstash not configured
+# But we define as private service for paid tier
+  - name: protean-redis
+    type: pserv
+    plan: free
+    region: oregon
+    branch: master
+    buildCommand: echo "Redis via Upstash Marketplace free tier - configure REDIS_URL from Upstash dashboard"
+    startCommand: echo "Redis placeholder - using Upstash free tier"
+
+# For Render, Redis free tier is actually via Key-Value store or external Upstash
+# We document here for real deployment, but for free tier testing we can use in-memory
+
+# Alternative: Use Render's Key-Value (Redis-compatible) free tier
+# In Render dashboard, create Key-Value store named protean-redis and link
+
+# Monitoring - Free Tier via Grafana Cloud 10k metrics free, not native Render service
+# For free tier testing, Prometheus + Grafana would be separate web services, but we keep minimal for 750 hrs/month free tier
+# Each web service on free tier is 750 hrs/month, sleeps after 15m inactivity, so 9 services * 750 = 6750 hrs > free tier single account limit?
+# Actually Render free tier: 750 hours/month per account total, not per service. So 9 services would exceed free tier if all running 24/7.
+# For free tier testing, we recommend only running 1-2 services at a time (api + frontend) + postgres, total within 750 hrs.
+# Or use paid tier $7/service/month for all 7 microservices.
+
+# For this render.yaml, we define all 9 services but note that free tier testing should only enable api + frontend + postgres + redis to stay within 750 hrs
+# To disable services for free tier testing, comment out offense-bot, defense-bot, zk-prover, regulatory, ml-scorer, connector, licensing, cron jobs
