@@ -316,13 +316,7 @@ async def _ensure_shared_mempool():
                     await conn.send_json({
                         "type": "dashboard_update",
                         "transactions": [real_tx],
-                        "metrics": {
-                            "aggregate_throughput_tx_s": 1,
-                            "total_scored": 1,
-                            "ml_confidence": 96.5,
-                            "proof_latest_ms": 0,
-                            "proof_count": 0
-                        }
+                        "metrics": live_store.get_metrics(),
                     })
                 except Exception:
                     pass

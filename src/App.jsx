@@ -403,10 +403,11 @@ function DashboardView({ data, isLive }) {
 
 function MempoolView({ data }) {
   const txs = data?.transactions || [];
+  const realCount = data?.metrics?.totalScored ?? txs.length;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
       <div style={styles.kpiStrip}>
-        <KPICard label="Mempool Tx Count" value={txs.length} trend="Active Buffer" color="var(--neon-cyan)" />
+        <KPICard label="Mempool Tx Count" value={realCount} trend={`${txs.length} in active buffer`} color="var(--neon-cyan)" />
         <KPICard label="Throughput" value={`${(Number(data?.metrics?.tps) || 0).toFixed(1)} tx/s`} trend="Live Stream" color="var(--neon-green)" />
         <KPICard label="Avg Risk" value={(Number(data?.metrics?.riskScore) || 0).toFixed(1)} trend="16F XGBoost" color="var(--neon-gold)" />
       </div>
