@@ -1,29 +1,29 @@
 /*
  * Patent US 63/835,655 — James Research Systems
- * File: frontend/ssaf_detector.js
- * Claim Mapping: SSAF (Patent Claim 2)
+ * File: frontend/composite_risk_fusion_detector.js
+ * Claim Mapping: COMPOSITE_RISK_FUSION (Patent Claim 2)
  */
 
-// SSAF Detector — Patent Claim 2: Sequential Score Attribution Fingerprint
+// COMPOSITE_RISK_FUSION Detector — Patent Claim 2: Sequential Score Attribution Fingerprint
 // Monitors score variance across last 10 consecutive transactions.
 // If all 10 scores are identical (variance == 0), flags ATTRIBUTION-BLIND mode.
 
-const SSAF_WINDOW_SIZE = 10;
-let ssafScoreWindow = [];
-let ssafDetected = false;
+const COMPOSITE_RISK_FUSION_WINDOW_SIZE = 10;
+let compositeRiskFusionScoreWindow = [];
+let compositeRiskFusionDetected = false;
 
-function ssafPushScore(score) {
-    ssafScoreWindow.push(score);
-    if (ssafScoreWindow.length > SSAF_WINDOW_SIZE) {
-        ssafScoreWindow.shift();
+function compositeRiskFusionPushScore(score) {
+    compositeRiskFusionScoreWindow.push(score);
+    if (compositeRiskFusionScoreWindow.length > COMPOSITE_RISK_FUSION_WINDOW_SIZE) {
+        compositeRiskFusionScoreWindow.shift();
     }
-    if (ssafScoreWindow.length === SSAF_WINDOW_SIZE) {
-        const variance = computeVariance(ssafScoreWindow);
-        if (variance === 0 && !ssafDetected) {
-            ssafDetected = true;
-            ssafLogEvent('SSAF ATTRIBUTION-BLIND MODE DETECTED');
-        } else if (variance > 0 && ssafDetected) {
-            ssafDetected = false;
+    if (compositeRiskFusionScoreWindow.length === COMPOSITE_RISK_FUSION_WINDOW_SIZE) {
+        const variance = computeVariance(compositeRiskFusionScoreWindow);
+        if (variance === 0 && !compositeRiskFusionDetected) {
+            compositeRiskFusionDetected = true;
+            compositeRiskFusionLogEvent('COMPOSITE_RISK_FUSION ATTRIBUTION-BLIND MODE DETECTED');
+        } else if (variance > 0 && compositeRiskFusionDetected) {
+            compositeRiskFusionDetected = false;
         }
     }
 }
@@ -34,8 +34,8 @@ function computeVariance(arr) {
     return sqDiff / arr.length;
 }
 
-function ssafLogEvent(message) {
-    const panel = document.getElementById('ssaf-monitor-panel');
+function compositeRiskFusionLogEvent(message) {
+    const panel = document.getElementById('compositeRiskFusion-monitor-panel');
     if (!panel) return;
     const entry = document.createElement('div');
     entry.style.cssText = 'background:var(--rbg);border:1px solid var(--rbd);border-radius:3px;padding:4px 6px;margin-bottom:4px;font-size:9px;line-height:1.4';
@@ -52,7 +52,7 @@ function ssafLogEvent(message) {
 const _origAddTx = window.addTransaction;
 window.addTransaction = function(tx) {
     if (tx && tx.risk_score !== undefined) {
-        ssafPushScore(tx.risk_score);
+        compositeRiskFusionPushScore(tx.risk_score);
     }
     _origAddTx(tx);
 };

@@ -133,7 +133,7 @@ def deploy_contract(w3: Web3, account, abi, bytecode, constructor_args=None, gas
     return receipt.contractAddress, tx_hash.hex(), receipt
 
 def main():
-    print("=== PROTEAN SHAPES - Mainnet Verifier Deployment - Government Standard ===")
+    print("=== PROTEAN DEFENSE - Mainnet Verifier Deployment - Government Standard ===")
     
     # 1. Load secrets from Vault - no env private key in prod
     try:

@@ -92,11 +92,11 @@ function buildInitialFromBackend(txs) {
   return txs.map(normalizeTx);
 }
 
-// ─── SSAF data builder ──────────────────────────────────────────────────
-function buildSsafDataFromBackend(ssafResp) {
-  if (!ssafResp || !ssafResp.current_mode) {
+// ─── COMPOSITE_RISK_FUSION data builder ──────────────────────────────────────────────────
+function buildCompositeRiskFusionDataFromBackend(compositeRiskFusionResp) {
+  if (!compositeRiskFusionResp || !compositeRiskFusionResp.current_mode) {
     return {
-      mode: 'NO_SSAF',
+      mode: 'NO_COMPOSITE_RISK_FUSION',
       magnitude: 0,
       score: 0,
       history: [],
@@ -105,20 +105,20 @@ function buildSsafDataFromBackend(ssafResp) {
       consecutive_blind: 0,
     };
   }
-  const mode = (ssafResp.current_mode || 'NO_SSAF').toUpperCase();
+  const mode = (compositeRiskFusionResp.current_mode || 'NO_COMPOSITE_RISK_FUSION').toUpperCase();
   return {
     mode,
-    magnitude: ssafResp.recent_magnitude ?? 0,
-    score: ssafResp.total_triggers ? Math.min(ssafResp.total_triggers * 5, 100) : 0,
-    history: (ssafResp.recent_provenance || [])
+    magnitude: compositeRiskFusionResp.recent_magnitude ?? 0,
+    score: compositeRiskFusionResp.total_triggers ? Math.min(compositeRiskFusionResp.total_triggers * 5, 100) : 0,
+    history: (compositeRiskFusionResp.recent_provenance || [])
       .filter(p => p.mode)
       .map(p => ({
-        mode: (p.mode || 'NO_SSAF').toUpperCase(),
+        mode: (p.mode || 'NO_COMPOSITE_RISK_FUSION').toUpperCase(),
         timestamp: p.created_at || new Date().toISOString(),
       })),
-    modes: ssafResp.modes || { competitive: 0, deferential: 0, attribution_blind: 0 },
-    total_triggers: ssafResp.total_triggers || 0,
-    consecutive_blind: ssafResp.consecutive_blind || 0,
+    modes: compositeRiskFusionResp.modes || { competitive: 0, deferential: 0, attribution_blind: 0 },
+    total_triggers: compositeRiskFusionResp.total_triggers || 0,
+    consecutive_blind: compositeRiskFusionResp.consecutive_blind || 0,
   };
 }
 
@@ -217,7 +217,7 @@ const NETWORK_NODES = [
   { id: 'node-4', name: 'Polygon Bridge', group: 2, value: 15 },
   { id: 'node-5', name: 'DOGE Mempool', group: 2, value: 5 },
   { id: 'node-6', name: 'ZKP Aggregator', group: 3, value: 28 },
-  { id: 'node-7', name: 'SSAF Oracle', group: 3, value: 20 },
+  { id: 'node-7', name: 'COMPOSITE_RISK_FUSION Oracle', group: 3, value: 20 },
   { id: 'node-8', name: 'KMS Key Master', group: 3, value: 24 },
   { id: 'node-9', name: 'Risk Engine', group: 4, value: 30 },
   { id: 'node-10', name: 'ML Scorer', group: 4, value: 26 },
@@ -250,7 +250,7 @@ function buildNetworkData() {
 // Use relative paths through serve_frontend.py reverse proxy (port 4000)
 // This avoids Firefox HTTPS-Only mode issues with direct localhost connections
 const API_MODEL = '/api/model';
-const API_SSAF = '/api/ssaf';
+const API_COMPOSITE_RISK_FUSION = '/api/compositeRiskFusion';
 const API_CRYPTO = '/api/crypto';
 const API_BIO  = '/api/biometric';
 
@@ -260,8 +260,8 @@ export function useLiveData() {
     riskScore: 0, tps: 0, zkProofMs: 0, mlConfidence: 0,
     keyRotations: 0, netLatency: 0, totalScored: 0, proofCount: 0,
   });
-  const [ssafData, setSsafData] = useState({
-    mode: 'NO_SSAF', magnitude: 0, score: 0, history: [],
+  const [compositeRiskFusionData, setCompositeRiskFusionData] = useState({
+    mode: 'NO_COMPOSITE_RISK_FUSION', magnitude: 0, score: 0, history: [],
     modes: {}, total_triggers: 0, consecutive_blind: 0,
   });
   const [qknData, setQknData] = useState({ keys: [], rotations: 0, chainHead: '' });
@@ -460,15 +460,15 @@ export function useLiveData() {
         // Backend not available, that's ok
       }
 
-      // ── SSAF monitor ──
+      // ── COMPOSITE_RISK_FUSION monitor ──
       try {
-        const ssafResp = await fetch(`${API_SSAF}/ssaf/monitor`);
-        if (ssafResp.ok && !cancelled) {
-          const ssafDataJson = await ssafResp.json();
-          setSsafData(buildSsafDataFromBackend(ssafDataJson));
+        const compositeRiskFusionResp = await fetch(`${API_COMPOSITE_RISK_FUSION}/compositeRiskFusion/monitor`);
+        if (compositeRiskFusionResp.ok && !cancelled) {
+          const compositeRiskFusionDataJson = await compositeRiskFusionResp.json();
+          setCompositeRiskFusionData(buildCompositeRiskFusionDataFromBackend(compositeRiskFusionDataJson));
         }
       } catch (e) {
-        // SSAF service not available
+        // COMPOSITE_RISK_FUSION service not available
       }
 
       // ── KMS status ──
@@ -669,7 +669,7 @@ export function useLiveData() {
     globeData,
     networkData,
     qknData,
-    ssafData,
+    compositeRiskFusionData,
     cisData,
     proofData,
     metrics,

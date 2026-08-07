@@ -107,7 +107,7 @@ const TOOLS = [
   { id: 'gnn', name: 'GNN Fraud Rings', icon: '🕸', desc: 'GraphSAGE message passing & loop detection' },
   { id: 'qrng', name: 'QRNG Hardware Stream', icon: '⚛', desc: 'Quantum entropy & NIST SP 800-22 test suite' },
   { id: 'zkproof', name: 'ZK-SNARK Prover', icon: '🛡', desc: 'Zero-Knowledge Groth16 circuit verifier' },
-  { id: 'ssaf', name: 'SSAF Adaptive Filter', icon: '〰', desc: 'Sub-second adaptive signal filtering' },
+  { id: 'compositeRiskFusion', name: 'Composite Risk Fusion Adaptive Filter', icon: '〰', desc: 'Sub-second adaptive signal filtering' },
 ];
 
 export default function ToolDemoStudio() {
@@ -292,9 +292,9 @@ export default function ToolDemoStudio() {
     }, 600);
   };
 
-  // ── 8. SSAF Wave Filter Demo State ──
-  const [ssafNoise, setSsafNoise] = useState(15);
-  const [ssafOutput, setSsafOutput] = useState(0.82);
+  // ── 8. Composite Risk Fusion Wave Filter Demo State ──
+  const [compositeRiskFusionNoise, setSsafNoise] = useState(15);
+  const [compositeRiskFusionOutput, setSsafOutput] = useState(0.82);
 
   const adjustSsafNoise = (val) => {
     setSsafNoise(val);
@@ -668,12 +668,12 @@ export default function ToolDemoStudio() {
           </>
         )}
 
-        {/* 8. SSAF WAVE FILTER */}
-        {selectedTool === 'ssaf' && (
+        {/* 8. Composite Risk Fusion WAVE FILTER */}
+        {selectedTool === 'compositeRiskFusion' && (
           <>
             <div style={styles.cardTitle}>
-              <span>〰 Sub-Second Adaptive Filter (SSAF)</span>
-              <span style={styles.badge('#00f0ff')}>SIGNAL NOISE: {ssafNoise}%</span>
+              <span>〰 Sub-Second Adaptive Filter (Composite Risk Fusion)</span>
+              <span style={styles.badge('#00f0ff')}>SIGNAL NOISE: {compositeRiskFusionNoise}%</span>
             </div>
 
             <div style={{ fontSize: '12px', color: '#94a3b8' }}>
@@ -685,16 +685,16 @@ export default function ToolDemoStudio() {
                 type="range"
                 min="0"
                 max="100"
-                value={ssafNoise}
+                value={compositeRiskFusionNoise}
                 onChange={(e) => adjustSsafNoise(Number(e.target.value))}
                 style={{ flex: 1 }}
               />
-              <span style={{ color: '#00f0ff', fontWeight: 'bold' }}>{ssafNoise}% Noise</span>
+              <span style={{ color: '#00f0ff', fontWeight: 'bold' }}>{compositeRiskFusionNoise}% Noise</span>
             </div>
 
             <div style={{ background: '#040812', padding: '12px', borderRadius: '8px', fontSize: '12px' }}>
               <div style={{ color: '#94a3b8' }}>
-                Filtered Output Efficiency: <span style={{ color: '#00ff88', fontWeight: 'bold' }}>{(ssafOutput * 100).toFixed(0)}%</span>
+                Filtered Output Efficiency: <span style={{ color: '#00ff88', fontWeight: 'bold' }}>{(compositeRiskFusionOutput * 100).toFixed(0)}%</span>
               </div>
             </div>
           </>
