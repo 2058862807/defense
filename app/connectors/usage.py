@@ -1,111 +1,113 @@
 """
-Usage Tracking - Enterprise
+Usage Tracking - Enterprise (metering-backed)
 GAP8: Complete usage tracking
 
-- Tracks API usage per API key, customer, license
-- Stores in Redis (real-time) + Postgres (persistent) - in-memory for demo
-- Metrics: total requests, success/error, latency, throughput
-- Per license tier limits: dev 1k/day, enterprise 10k/day, enterprise_gov 100k/day
-- Tiered disclosure for usage stats
+- Tracks API usage per API key, grant, customer - persisted in the durable
+  metering ledger (data/metering.db, SQLite WAL + optional Postgres mirror).
+- Metrics: total requests, success/error, per-endpoint breakdown.
+- Tier limits are retired: entitlement is enforced by the grant's fixed token
+  pool (see app/metering/migrate.ensure_grant_for_license). These helpers keep
+  the legacy public API for the connector / licensing server while delegating
+  all state to the metering store.
 """
 
-import time
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from collections import defaultdict
 
+from app.metering.store import (
+    EntitlementError,
+    MeteringStore,
+    metering_store as _default_store,
+)
+from app.metering.migrate import grant_for_key
+
 logger = logging.getLogger(__name__)
 
-# In-memory for demo, Redis + Postgres in prod
-usage_db: Dict[str, Dict] = {}
-usage_counters: Dict[str, int] = defaultdict(int)  # api_key -> count
 
-# Tier limits per day
-TIER_LIMITS = {
-    "dev": 1000,
-    "enterprise": 10000,
-    "enterprise_gov": 100000
-}
+def _decision_for(status: int) -> Optional[str]:
+    return None if status is None else ("pass" if status < 400 else "error")
 
-def record_usage(api_key: str, endpoint: str, latency_ms: float, status: int, customer: Optional[str] = None):
+
+def record_usage(
+    api_key: str,
+    endpoint: str,
+    latency_ms: float,
+    status: int,
+    customer: Optional[str] = None,
+    store: Optional[MeteringStore] = None,
+) -> Dict:
     """
-    Record API usage - called by connector and API services
-    """
-    timestamp = datetime.now(timezone.utc).isoformat()
-    timestamp_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    Record API usage - called by connector and API services.
 
-    # In production, this would be Kafka -> Postgres + Redis INCR
-    usage_key = f"{api_key}:{timestamp_day}:{int(time.time()*1000)}"
-    
-    record = {
-        "api_key": api_key[:20] + "...",  # Don't store full key in logs for PII
-        "api_key_full": api_key,  # Full key stored securely in prod Postgres, not logs
-        "customer": customer,
+    Writes a zero-token audit event to the metering ledger (no double-charge:
+    the request's token was already settled by the metered dependency). Returns
+    a compat-shaped record or an empty one for unknown keys.
+    """
+    store = store or _default_store
+    grant = grant_for_key(api_key, store=store)
+    if not grant:
+        logger.warning(f"Usage recorded for unknown API key: {api_key[:20]}...")
+        return {"api_key": api_key[:20] + "...", "endpoint": endpoint, "status": status, "recorded": False}
+
+    try:
+        res = store.authorize_reservation(api_key, endpoint=endpoint, tokens=0)
+        store.settle_reservation(
+            res["reservation_id"],
+            event_type="api_call",
+            decision=_decision_for(status),
+            score=None,
+        )
+        recorded = True
+    except EntitlementError as e:
+        logger.warning(f"Usage record skipped for {api_key[:20]}...: {e}")
+        return {"api_key": api_key[:20] + "...", "endpoint": endpoint, "status": status, "recorded": False}
+
+    return {
+        "api_key": api_key[:20] + "...",
+        "customer": customer or grant["customer_id"],
         "endpoint": endpoint,
-        "timestamp": timestamp,
-        "timestamp_day": timestamp_day,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "latency_ms": latency_ms,
-        "status": status
+        "status": status,
+        "recorded": recorded,
     }
 
-    usage_db[usage_key] = record
-    usage_counters[api_key] += 1
 
-    # Check limits
-    from app.connectors.api_key import get_api_key_info
-    key_info = get_api_key_info(api_key)
-    if key_info:
-        tier = key_info.get("tier", "dev")
-        limit = TIER_LIMITS.get(tier, 1000)
-        count = usage_counters[api_key]
-        if count > limit:
-            logger.warning(f"API key {api_key[:20]}... exceeded daily limit {limit} for tier {tier} - count {count}")
-
-    logger.debug(f"Usage recorded: api_key={api_key[:20]}... endpoint={endpoint} status={status} latency={latency_ms:.2f}ms")
-
-    return record
-
-def get_usage_stats(api_key: Optional[str] = None, customer: Optional[str] = None, days: int = 7) -> Dict:
+def get_usage_stats(
+    api_key: Optional[str] = None,
+    customer: Optional[str] = None,
+    days: int = 7,
+    store: Optional[MeteringStore] = None,
+) -> Dict:
     """
-    Get usage stats - for customer portal and tiered disclosure
+    Get usage stats - for customer portal and tiered disclosure.
+
+    Aggregates usage_events from the metering store into the legacy shape.
+    Latency is not persisted by the ledger; avg/p95 return 0.
     """
+    store = store or _default_store
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=days)
+    cutoff = (now - timedelta(days=days)).isoformat()
 
-    filtered = []
-    for record in usage_db.values():
-        try:
-            ts = datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
-            if ts < cutoff:
-                continue
-        except:
-            pass
+    events: List[Dict] = []
+    if customer:
+        for grant in store.list_grants(customer_id=customer):
+            events.extend(store.usage_for_grant(grant["id"], since=cutoff, limit=10000))
+    elif api_key:
+        grant = grant_for_key(api_key, store=store)
+        events = store.usage_for_grant(grant["id"], since=cutoff, limit=10000) if grant else []
+    else:
+        events = store.all_usage(since=cutoff, limit=10000)
 
-        if api_key and not record["api_key_full"].startswith(api_key) and api_key not in record["api_key_full"]:
-            # Allow prefix search
-            if api_key not in record["api_key_full"] and not record["api_key_full"].startswith(api_key):
-                continue
-
-        if customer:
-            # Need to join with api_keys_db to get customer
-            from app.connectors.api_key import get_api_key_info
-            # For simplicity, if customer filter, check if api_key belongs to customer
-            # In real prod, would have customer field in usage record
-            pass
-
-        filtered.append(record)
-
-    total = len(filtered)
-    success = len([r for r in filtered if r["status"] < 400])
+    total = len(events)
+    success = len([e for e in events if e.get("decision") not in (None, "error")])
     error = total - success
-    avg_latency = sum([r["latency_ms"] for r in filtered]) / total if total > 0 else 0
-    p95_latency = sorted([r["latency_ms"] for r in filtered])[int(len(filtered)*0.95)] if filtered else 0
 
-    # Per endpoint breakdown
     per_endpoint = defaultdict(int)
-    for r in filtered:
-        per_endpoint[r["endpoint"]] += 1
+    for e in events:
+        per_endpoint[e.get("endpoint") or "unknown"] += 1
 
     return {
         "total_requests": total,
@@ -113,61 +115,63 @@ def get_usage_stats(api_key: Optional[str] = None, customer: Optional[str] = Non
         "error": error,
         "success_rate": success / total if total > 0 else 0,
         "error_rate": error / total if total > 0 else 0,
-        "avg_latency_ms": avg_latency,
-        "p95_latency_ms": p95_latency,
+        "avg_latency_ms": 0.0,
+        "p95_latency_ms": 0.0,
         "per_endpoint": dict(per_endpoint),
         "period_days": days,
-        "period_start": cutoff.isoformat(),
-        "period_end": now.isoformat()
+        "period_start": cutoff,
+        "period_end": now.isoformat(),
     }
 
-def get_customer_usage(customer: str, days: int = 30) -> Dict:
-    """Get usage for customer across all their API keys"""
-    # Find all API keys for customer
-    from app.connectors.api_key import api_keys_db
-    customer_keys = [k for k, v in api_keys_db.items() if v["customer"] == customer]
-    
-    stats = get_usage_stats(days=days)
-    # Filter to customer keys only
-    customer_usage = [r for r in usage_db.values() if r["api_key_full"] in customer_keys]
-    
-    total = len(customer_usage)
-    # Check limits per tier
-    # Get tier from first key
+
+def get_customer_usage(customer: str, days: int = 30, store: Optional[MeteringStore] = None) -> Dict:
+    """Get usage for customer across all their grants."""
+    store = store or _default_store
+    customer_row = store.get_customer_by_name(customer)
+    grants = store.list_grants(customer_id=customer_row["id"]) if customer_row else []
+
+    total = 0
+    pool = 0
+    consumed = 0
     tier = "dev"
-    if customer_keys:
-        first_key_info = api_keys_db.get(customer_keys[0], {})
-        tier = first_key_info.get("tier", "dev")
-    
-    limit = TIER_LIMITS.get(tier, 1000)
-    limit_daily = limit
-    limit_period = limit * days
+    for grant in grants:
+        total += store.grant_balance(grant["id"]).get("tokens_consumed", 0)
+        pool += grant["token_pool"]
+        consumed += grant["tokens_consumed"]
+        tier = grant["tier"] or tier
+
+    remaining = max(0, pool - consumed)
+    usage_percent = (consumed / pool * 100) if pool > 0 else 0
 
     return {
         "customer": customer,
         "tier": tier,
         "period_days": days,
         "total_requests": total,
-        "limit_daily": limit_daily,
-        "limit_period": limit_period,
-        "usage_percent": (total / limit_period * 100) if limit_period > 0 else 0,
-        "remaining": max(0, limit_period - total),
-        "stats": get_usage_stats(days=days)
+        "grants": len(grants),
+        "token_pool": pool,
+        "tokens_consumed": consumed,
+        "tokens_remaining": remaining,
+        "limit_period": pool,
+        "usage_percent": usage_percent,
+        "remaining": remaining,
+        "stats": get_usage_stats(customer=customer, days=days, store=store),
     }
 
-def check_rate_limit(api_key: str) -> bool:
-    """
-    Check if API key is within rate limit
-    Returns True if allowed, False if exceeded
-    """
-    from app.connectors.api_key import get_api_key_info
-    key_info = get_api_key_info(api_key)
-    if not key_info:
-        return False
 
-    tier = key_info.get("tier", "dev")
-    limit = TIER_LIMITS.get(tier, 1000)
-    
-    # Simple daily limit check - in prod would use Redis INCR with TTL
-    count = usage_counters.get(api_key, 0)
-    return count < limit
+def check_rate_limit(api_key: str, store: Optional[MeteringStore] = None) -> bool:
+    """
+    Check if API key is within its token entitlement.
+
+    Reserves and immediately releases one token; returns True when the grant is
+    active and funded, False when the key is unknown/expired/exhausted.
+    """
+    store = store or _default_store
+    if not store.verify_api_key(api_key):
+        return False
+    try:
+        res = store.authorize_reservation(api_key, endpoint="/rate-limit-check", tokens=1)
+        store.release_reservation(res["reservation_id"])
+        return True
+    except EntitlementError:
+        return False

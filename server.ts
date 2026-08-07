@@ -1,9 +1,29 @@
 import express from "express";
 import path from "path";
-import { createServer } from "http";
+import http from "http";
+import https from "https";
+import { createServer as createHttpServer } from "http";
+import { createServer as createHttpsServer } from "https";
 import { WebSocketServer, WebSocket } from "ws";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
+
+// Minimal real .env loader (no dependency needed) - never overrides process env.
+import { readFileSync, existsSync } from "fs";
+if (existsSync(".env")) {
+  for (const rawLine of readFileSync(".env", "utf8").split("\n")) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (!(key in process.env)) process.env[key] = value;
+  }
+}
 
 // Process level crash prevention
 process.on("uncaughtException", (err) => {
@@ -13,13 +33,84 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("[PROTEAN Server] Unhandled Rejection at:", promise, "reason:", reason);
 });
 
+// --- A2 TLS/mTLS: HTTPS for the gateway + client cert for the backend peer ---
+const REQUIRE_TLS = process.env.REQUIRE_TLS === "true";
+const REQUIRE_MTLS_PEER = process.env.REQUIRE_MTLS_PEER === "true";
+const TLS_CERT = process.env.TLS_CERT;
+const TLS_KEY = process.env.TLS_KEY;
+const TLS_CA = process.env.TLS_CA;
+const TLS_CLIENT_CERT = process.env.TLS_CLIENT_CERT;
+const TLS_CLIENT_KEY = process.env.TLS_CLIENT_KEY;
+
+function certsPresent(): boolean {
+  return !!TLS_CERT && !!TLS_KEY && !!TLS_CA &&
+    existsSync(TLS_CERT!) && existsSync(TLS_KEY!) && existsSync(TLS_CA!);
+}
+
+const tlsEnabled = REQUIRE_TLS && certsPresent();
+const mTlsClientConfigured = tlsEnabled && REQUIRE_MTLS_PEER &&
+  !!TLS_CLIENT_CERT && !!TLS_CLIENT_KEY && existsSync(TLS_CLIENT_CERT!) && existsSync(TLS_CLIENT_KEY!);
+
+const backendTlsAgent = tlsEnabled
+  ? new https.Agent({
+      rejectUnauthorized: true,
+      ca: readFileSync(TLS_CA!),
+      cert: mTlsClientConfigured ? readFileSync(TLS_CLIENT_CERT!) : undefined,
+      key: mTlsClientConfigured ? readFileSync(TLS_CLIENT_KEY!) : undefined,
+    })
+  : undefined;
+
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "placeholder_key" });
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
+const HTTP_REDIRECT_PORT = Number(process.env.HTTP_REDIRECT_PORT) || 3080;
 
 // Real Python backend URLs - Government Standard - No Mock
-const PYTHON_API_URL = process.env.PYTHON_API_URL || "http://127.0.0.1:8080";
-const PYTHON_WS_URL = process.env.PYTHON_WS_URL || "ws://127.0.0.1:8080/ws";
+const PYTHON_API_URL = process.env.PYTHON_API_URL || `${tlsEnabled ? "https" : "http"}://127.0.0.1:8080`;
+const PYTHON_WS_URL = process.env.PYTHON_WS_URL || `${tlsEnabled ? "wss" : "ws"}://127.0.0.1:8080/ws`;
+
+interface BackendResponse {
+  ok: boolean;
+  status: number;
+  headers: http.IncomingHttpHeaders;
+  text(): Promise<string>;
+  json(): Promise<any>;
+}
+
+// Agent-aware backend request (carries the mTLS client cert to the Python peer).
+function requestBackend(url: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}): Promise<BackendResponse> {
+  const u = new URL(url);
+  const mod = u.protocol === "https:" ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = mod.request(
+      {
+        hostname: u.hostname,
+        port: u.port || (u.protocol === "https:" ? 443 : 80),
+        path: u.pathname + u.search,
+        method: init.method || "GET",
+        headers: init.headers || {},
+        agent: u.protocol === "https:" ? backendTlsAgent : undefined,
+      },
+      (res) => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          resolve({
+            ok: res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode as number,
+            headers: res.headers,
+            text: async () => data,
+            json: async () => JSON.parse(data),
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    if (init.body) req.write(init.body);
+    req.end();
+  });
+}
 
 app.use(express.json());
 
@@ -27,13 +118,11 @@ app.use(express.json());
 async function getRealChainActivity() {
   try {
     // Fetch from Python backend /health which has real model version and prover reachable
-    const resp = await fetch(`${PYTHON_API_URL}/health`);
+    const resp = await requestBackend(`${PYTHON_API_URL}/health`);
     if (resp.ok) {
-      const health = await resp.json();
+      await resp.json();
       // Get real TPS from metrics endpoint if available
-      // For now, attempt to get from Python API that has real mempool data
-      const metricsResp = await fetch(`${PYTHON_API_URL}/metrics`);
-      // Parse real TPS from metrics or use real EVM block data
+      const metricsResp = await requestBackend(`${PYTHON_API_URL}/metrics`);
       return {
         avalanche: { name: "Avalanche C-Chain", tps: 14.2, source: "real" }, // Would be from real Avalanche RPC in prod
         bitcoin: { name: "Bitcoin Network", tps: 8.4, source: "real" },
@@ -53,34 +142,34 @@ async function getRealChainActivity() {
 // Helper to proxy to real Python microservices - no mock fallback for critical paths, fail-closed for compliance
 async function proxyToRealBackend(req: express.Request, res: express.Response, targetUrl: string, allowMockFallback = true) {
   try {
-    const headers = new Headers();
+    const headers: Record<string, string> = {};
     Object.entries(req.headers).forEach(([key, value]) => {
       const lowerKey = key.toLowerCase();
-      const forbiddenHeaders = ["host", "connection", "keep-alive", "transfer-encoding", "upgrade"];
+      const forbiddenHeaders = ["host", "connection", "keep-alive", "transfer-encoding", "upgrade", "content-length"];
       if (!forbiddenHeaders.includes(lowerKey) && value !== undefined) {
         if (Array.isArray(value)) {
-          value.forEach(v => headers.append(key, v));
+          headers[key] = value.join(", ");
         } else {
-          headers.set(key, value);
+          headers[key] = value;
         }
       }
     });
 
-    const fetchOptions: RequestInit = {
+    const fetchOptions: { method?: string; headers?: Record<string, string>; body?: string } = {
       method: req.method,
-      headers: headers,
+      headers,
     };
 
     if (req.method !== "GET" && req.method !== "HEAD") {
       fetchOptions.body = JSON.stringify(req.body);
     }
 
-    const response = await fetch(targetUrl, fetchOptions);
-    
+    const response = await requestBackend(targetUrl, fetchOptions);
+
     if (!response.ok) {
-      // If Python backend returns error, propagate it - don't silently mock for compliance-critical paths
-      // For non-critical UI, allow fallback if explicitly allowed
-      if (!allowMockFallback) {
+      // Propagate 4xx (auth/RBAC/validation) verbatim - never mask a denial.
+      // For non-critical UI, allow fallback for genuine availability failures (5xx).
+      if (!allowMockFallback || (response.status >= 400 && response.status < 500)) {
         res.status(response.status);
         const text = await response.text();
         res.send(text);
@@ -90,13 +179,13 @@ async function proxyToRealBackend(req: express.Request, res: express.Response, t
     }
 
     res.status(response.status);
-    response.headers.forEach((value, key) => {
-      if (key.toLowerCase() !== "transfer-encoding") {
+    Object.entries(response.headers).forEach(([key, value]) => {
+      if (key.toLowerCase() !== "transfer-encoding" && value !== undefined) {
         res.setHeader(key, value);
       }
     });
 
-    const contentType = response.headers.get("content-type") || "";
+    const contentType = response.headers["content-type"] || "";
     if (contentType.includes("application/json")) {
       const data = await response.json();
       res.json(data);
@@ -147,6 +236,11 @@ app.all("/api/v1/explain/:tx", async (req, res) => {
   await proxyToRealBackend(req, res, `${PYTHON_API_URL}/analyze`, false); // Fail-closed for compliance
 });
 
+// Real sandwich detection proxy - mapped before the generic /api/:service/* route
+app.all("/api/sandwich/detect", async (req, res) => {
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/sandwich/detect`, true);
+});
+
 app.all("/api/:service/*", async (req, res) => {
   const serviceName = req.params.service;
   const originalUrl = req.originalUrl;
@@ -157,23 +251,70 @@ app.all("/api/:service/*", async (req, res) => {
 });
 
 app.all("/dashboard/live", async (req, res) => {
-  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/health`, false);
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/dashboard/live`, false);
 });
 
 app.all("/ssaf/monitor", async (req, res) => {
-  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/health`, true);
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/ssaf/monitor`, true);
 });
 
 app.all("/kms/status", async (req, res) => {
-  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/health`, true);
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/kms/status`, true);
+});
+
+app.all("/kms/keys", async (req, res) => {
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/kms/keys`, true);
+});
+
+app.all("/kms/rotate", async (req, res) => {
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/kms/rotate`, true);
+});
+
+app.all("/sandwich/detect", async (req, res) => {
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/sandwich/detect`, true);
 });
 
 app.all("/biometric/cis", async (req, res) => {
-  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/health`, true);
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/biometric/cis`, true);
+});
+
+// MEV attacker intel - defensive surveillance (read-only operational telemetry)
+app.all("/intel/:path*", async (req, res) => {
+  const targetUrl = `${PYTHON_API_URL}${req.originalUrl}`;
+  await proxyToRealBackend(req, res, targetUrl, true);
+});
+
+// Gov offense/analysis endpoints - proxied to real backend (dev-mode JWT bypass active)
+app.all("/analyze", async (req, res) => {
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/analyze`, false);
+});
+
+app.all("/bot/*", async (req, res) => {
+  const targetUrl = `${PYTHON_API_URL}${req.originalUrl}`;
+  await proxyToRealBackend(req, res, targetUrl, true);
+});
+
+app.all("/policy", async (req, res) => {
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/policy`, true);
+});
+
+// Regulatory/compliance endpoints - fail-closed (compliance-critical, no mock).
+app.all("/regulatory/compliance/screen", async (req, res) => {
+  await proxyToRealBackend(req, res, `${PYTHON_API_URL}/regulatory/compliance/screen`, false);
+});
+app.all("/regulatory/:path*", async (req, res) => {
+  const targetUrl = `${PYTHON_API_URL}${req.originalUrl}`;
+  await proxyToRealBackend(req, res, targetUrl, false);
 });
 
 app.all("/health", async (req, res) => {
   await proxyToRealBackend(req, res, `${PYTHON_API_URL}/health`, false);
+});
+
+// Auth/IdP endpoints (JWKS + token issuance) - fail-closed, never mocked.
+app.all("/auth/:path*", async (req, res) => {
+  const targetUrl = `${PYTHON_API_URL}${req.originalUrl}`;
+  await proxyToRealBackend(req, res, targetUrl, false);
 });
 
 // WebMaster AI Agent Endpoints - Real
@@ -269,7 +410,9 @@ app.post("/api/chat", async (req, res) => {
 });
 
 async function startServer() {
-  const server = createServer(app);
+  const server = tlsEnabled
+    ? createHttpsServer({ cert: readFileSync(TLS_CERT!), key: readFileSync(TLS_KEY!) }, app)
+    : createHttpServer(app);
   const wss = new WebSocketServer({ noServer: true });
   const wssLive = new WebSocketServer({ noServer: true });
 
@@ -294,9 +437,9 @@ async function startServer() {
     function startRealBackendProxy() {
       try {
         // Try to connect to real Python backend WebSocket that has real mempool connector
-        // Python backend should expose /ws or similar with real pending txs from mempool_connector.py
-        const pythonWsUrl = process.env.PYTHON_WS_URL || "ws://127.0.0.1:8080/ws";
-        backendWs = new WebSocket(pythonWsUrl);
+        // Dashboard clients expect dashboard_update + intel_update, which /ws/dashboard emits
+        const pythonWsUrl = process.env.PYTHON_WS_URL || `${tlsEnabled ? "wss" : "ws"}://127.0.0.1:8080/ws/dashboard`;
+        backendWs = new WebSocket(pythonWsUrl, backendTlsAgent ? { agent: backendTlsAgent } : undefined);
 
         backendWs.on("open", () => {
           console.log("[PROTEAN Server] Connected to REAL Python backend WebSocket with real mempool, scoring, ZK, OFAC/FATF live feeds");
@@ -305,8 +448,9 @@ async function startServer() {
         backendWs.on("message", (data) => {
           try {
             if (clientWs.readyState === WebSocket.OPEN) {
-              // Forward real data from Python backend - real transactions scored via ML, real OFAC checks, real ZK proofs
-              clientWs.send(data);
+              // Forward real data from Python backend - real transactions scored via ML, real OFAC checks, real ZK proofs.
+              // Send as TEXT frame (not Buffer -> binary) so browsers receive event.data as a string, not a Blob.
+              clientWs.send(Buffer.isBuffer(data) ? data.toString() : data);
             }
           } catch (e) {
             console.warn("Backend message send error:", e);
@@ -346,7 +490,7 @@ async function startServer() {
     clientWs.on("message", (data) => {
       try {
         if (backendWs && backendWs.readyState === WebSocket.OPEN) {
-          backendWs.send(data);
+          backendWs.send(Buffer.isBuffer(data) ? data.toString() : data);
         }
       } catch (e) {
         console.warn("Client message relay error:", e);
@@ -423,10 +567,25 @@ async function startServer() {
 
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`[PROTEAN Server] Gateway running REAL MODE - No Mock - Government & Bank Ready`);
-    console.log(`[PROTEAN Server] http://0.0.0.0:${PORT}`);
+    console.log(`[PROTEAN Server] ${tlsEnabled ? "https" : "http"}://0.0.0.0:${PORT}${tlsEnabled ? " (TLS enabled)" : " (WARNING: TLS disabled)"}`);
     console.log(`[PROTEAN Server] Python backend expected at ${PYTHON_API_URL} - real ML, ZK WASM+ZKEY, OFAC/FATF live, QRNG/HSM cloud`);
     console.log(`[PROTEAN Server] WebSocket /ws/dashboard proxies to real Python backend with real mempool transactions, not generateMockTx()`);
+    if (tlsEnabled) {
+      console.log(`[PROTEAN Server] mTLS peer to backend: ${mTlsClientConfigured ? "client cert presented" : "DISABLED (REQUIRE_MTLS_PEER not set)"}`);
+    }
   });
+
+  if (tlsEnabled) {
+    // HTTP -> HTTPS redirect (HTTPS-only posture).
+    const redirect = createHttpServer((req, res) => {
+      const host = (req.headers.host || "").replace(/:(\d+)$/, `:${PORT}`);
+      res.writeHead(301, { Location: `https://${host}${req.url || "/"}` });
+      res.end();
+    });
+    redirect.listen(HTTP_REDIRECT_PORT, "0.0.0.0", () => {
+      console.log(`[PROTEAN Server] HTTP->HTTPS redirect on :${HTTP_REDIRECT_PORT}`);
+    });
+  }
 }
 
 startServer().catch((err) => {

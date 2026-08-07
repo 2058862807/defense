@@ -41,6 +41,32 @@ def get_secret_from_vault(vault_addr: str, role_id: str, secret_id: str, kv_path
     secret = client.secrets.kv.v2.read_secret_version(path=kv_path.replace("secret/data/","").replace("secret/",""), mount_point="secret")
     return secret["data"]["data"]
 
+def require_vault_or_fail(settings) -> None:
+    """Fail closed: in production, Vault must actually authenticate at boot,
+    not just have non-empty config values. Without this, a misconfigured
+    VAULT_ROLE_ID/VAULT_SECRET_ID only surfaces the first time something
+    tries to sign or read a secret - the process boots and serves traffic
+    in the meantime. Mirrors require_tls_or_fail's fail-closed contract.
+    """
+    if not settings.is_production():
+        return
+    try:
+        client = get_vault_client(
+            settings.vault_addr,
+            settings.vault_role_id,
+            settings.vault_secret_id.get_secret_value(),
+        )
+        authenticated = client.is_authenticated()
+    except Exception as exc:
+        raise RuntimeError(
+            "FAIL-CLOSED: Vault authentication failed at boot "
+            f"(vault_addr={settings.vault_addr}): {exc}"
+        ) from exc
+    if not authenticated:
+        raise RuntimeError(
+            f"FAIL-CLOSED: Vault client not authenticated at boot (vault_addr={settings.vault_addr})."
+        )
+
 # --- JWT RS256 via JWKS (never HS256 or 'none' in prod) ---
 _jwks_cache: Dict[str, PyJWKClient] = {}
 
@@ -59,8 +85,11 @@ def verify_jwt_gov(token: str, jwks_url: str, audience: str, issuer: str, algori
     """
     if algorithms is None:
         algorithms = ["RS256", "ES256"]
-    if any(a.lower() == "none" for a in algorithms):
+    lowered = [a.lower() for a in algorithms]
+    if "none" in lowered:
         raise ValueError("JWT 'none' algorithm prohibited by gov standard")
+    if "hs256" in lowered or "hs384" in lowered or "hs512" in lowered:
+        raise ValueError("Symmetric JWT algorithms (HS*) are prohibited by gov standard")
 
     jwks_client = get_jwks_client(jwks_url)
     signing_key = jwks_client.get_signing_key_from_jwt(token)
@@ -85,6 +114,46 @@ def verify_jwt_gov(token: str, jwks_url: str, audience: str, issuer: str, algori
         return payload
     except jwt.InvalidTokenError as e:
         logger.warning(f"JWT verification failed: {e}")
+        raise PermissionError(f"JWT invalid: {e}")
+
+def verify_jwt(token: str, secret: str, audience: str, algorithms: Optional[list] = None) -> Dict[str, Any]:
+    """
+    HS256 dev-only fallback for local/staging environments.
+
+    Government standard: never used in production. This function FAILS CLOSED:
+    in a production process it raises before touching the token, even if a
+    caller passes HS256 explicitly. HS256 is only honored in non-production
+    processes AND when `jwt_allow_hs256_dev` is explicitly set to true.
+    """
+    from app.core.config import settings
+
+    if algorithms is None:
+        algorithms = ["HS256"]
+    lowered = [a.lower() for a in algorithms]
+    if "none" in lowered:
+        raise ValueError("JWT 'none' algorithm prohibited by gov standard")
+    if "hs256" in lowered and (settings.is_production() or not settings.jwt_allow_hs256_dev):
+        raise PermissionError(
+            "HS256 JWT rejected: production processes must verify RS256/ES256 "
+            "via JWKS only (set jwt_allow_hs256_dev=true in non-prod to enable)"
+        )
+    try:
+        payload = jwt.decode(
+            token,
+            secret,
+            algorithms=algorithms,
+            audience=audience,
+            options={
+                "require": ["exp", "iat", "aud", "sub"],
+                "verify_aud": True,
+                "verify_iss": False,
+            },
+        )
+        if "sub" not in payload:
+            raise jwt.InvalidTokenError("Missing sub claim")
+        return payload
+    except jwt.InvalidTokenError as e:
+        logger.warning(f"JWT dev fallback verification failed: {e}")
         raise PermissionError(f"JWT invalid: {e}")
 
 # --- bcrypt with pre-hash for >72 bytes (OWASP) ---

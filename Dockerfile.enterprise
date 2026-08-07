@@ -7,12 +7,13 @@ FROM python:3.11-slim-bookworm as liboqs-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git libssl-dev && rm -rf /var/lib/apt/lists/*
 ARG LIBOQS_VERSION=0.12.0
-ARG LIBOQS_COMMIT=0e0f7d4c5c8a2b1a9f6e3d2c1b0a9f8e7d6c5b4a
+ARG LIBOQS_COMMIT=f4b96220e4bd208895172acc4fedb5a191d9f5b1
 WORKDIR /tmp
-RUN git clone --branch ${LIBOQS_VERSION} https://github.com/open-quantum-safe/liboqs.git && \
-    cd liboqs && \
-    git checkout ${LIBOQS_VERSION} && \
-    sha256sum -c <<< "expected_sha_placeholder" || echo "Verify liboqs hash in CI" && \
+RUN git clone https://github.com/open-quantum-safe/liboqs.git && \
+    cd liboqs && git checkout ${LIBOQS_COMMIT} && \
+    if [ "$(git rev-parse HEAD)" != "${LIBOQS_COMMIT}" ]; then \
+        echo "FATAL: liboqs checkout does not match pinned commit ${LIBOQS_COMMIT}" >&2; exit 1; \
+    fi && \
     mkdir build && cd build && \
     cmake -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release .. && \
     make -j$(nproc) && make install && ldconfig
@@ -35,8 +36,7 @@ FROM python:3.11-slim-bookworm as python-builder
 WORKDIR /app
 COPY requirements.enterprise.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --require-hashes -r requirements.enterprise.txt || \
-    pip install --no-cache-dir -r requirements.enterprise.txt
+    pip install --no-cache-dir --require-hashes -r requirements.enterprise.txt
 # Verify SLSA provenance of pip packages via cosign (in CI)
 
 # Stage 4: Final distroless enterprise

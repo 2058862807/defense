@@ -5,6 +5,7 @@ namespace: protean-prod
 
 resources:
   - namespace/namespace.yaml
+  - networkpolicy/networkpolicy.yaml
   - configmaps/app-config.yaml
   - secrets/secrets.yaml
   - postgres/postgres.yaml
@@ -14,9 +15,10 @@ resources:
   - operator/crd.yaml
   - operator/deployment.yaml
   - api/api.yaml
-  - zk-prover/zk-prover.yaml
-  - offense-bot/offense-bot.yaml
   - defense-bot/defense-bot.yaml
+  # NOTE: no standalone zk-prover service. ZK proving runs in-process in the api
+  # pod via CircuitIngestor (snarkjs + WASM + ZKEY). The old zk-prover manifest
+  # (k8s/zk-prover/zk-prover.yaml) is DEPRECATED and not applied.
   - regulatory/regulatory.yaml
   - ml-scorer/ml-scorer.yaml
   - connector/connector.yaml

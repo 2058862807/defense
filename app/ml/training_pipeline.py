@@ -319,7 +319,8 @@ class EnterpriseTrainingPipeline:
                 random_state=42,
                 n_jobs=1,  # deterministic
                 eval_metric="logloss",
-                use_label_encoder=False
+                use_label_encoder=False,
+                enable_categorical=False,  # numeric features only; shap 0.52 cannot parse categorical-split trees
             )
             print("Training XGBoost model")
         except ImportError:

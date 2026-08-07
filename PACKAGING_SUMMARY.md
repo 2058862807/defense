@@ -2,6 +2,12 @@
 
 ## Problem: Circuits Too Big for Git
 
+> **CORRECTION (2026-08-05):** Artifact figures in this dated packaging note were
+> superseded by a claims-vs-evidence audit. Authoritative values: combined circuit hash
+> `d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41`, wasm `9e65903f…`,
+> zkey `db290f7b…` (**297,396 B**), 0000.zkey `797b6409…` (201,048 B), **613 constraints /
+> 619 wires**, powers of tau 14. See `README_PRODUCTION.md`.
+
 Circuits contain large files:
 - pot14_*.ptau 6.1M each
 - pot14_final.ptau 18M

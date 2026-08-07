@@ -5,7 +5,7 @@
 **Version:** 2.0.0-enterprise + Real Ceremony (Power 14, 3 participants + beacon) + Theater Fixes  
 **Compliance:** Uses FIPS-approved algorithms (AES-256-GCM, SHA256, ML-KEM-768 FIPS 203, ECDSA P-256 FIPS 186-4) via libraries that can be FIPS-validated - module not CMVP validated, no cert # | Implements controls aligned with FedRAMP High / NIST SP 800-53 Rev5 - self-assessed per `docs/COMPLIANCE.md`, not 3PAO assessed, no ATO | SLSA L3 provenance via cosign + Rekor  
 **Verification:** `python scripts/enterprise_verification.py` → 10/10 SELF-ASSESSMENT PASS (code paths exist and import cleanly with real API calls and gov patterns, not accredited third-party certified)  
-**Real Artifacts:** `circuits/final_artifacts/` WASM 1.7M `3b806d49...` + ZKEY final 198K `f4f96c2ddd7a...` combined hash `f4f96c2ddd7a11e453fc60705bb13fb748e91e2a32726f6639c2276a370140a8` SLSA L3, 327 constraints, 333 wires, real proof `PROVED_REAL_GROTH16` via `snarkjs wtns calculate` + `groth16 prove` + `verify OK`  
+**Real Artifacts:** `circuits/final_artifacts/` WASM 1.7M `9e65903f...` + ZKEY final 297KB `d80e3987...` combined hash `d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41` SLSA L3, 613 constraints, 619 wires, real proof `PROVED_REAL_GROTH16` via `snarkjs wtns calculate` + `groth16 prove` + `verify OK`  
 **Pushed:** `github.com/2058862807/defense` latest `3b0030a` with real `EVM_WS_URL=wss://ethereum.publicnode.com` public free RPC
 
 ---
@@ -26,15 +26,15 @@ Protean Defense is an enterprise-grade, government-standard MEV protection and c
 
 ### Core Concepts
 
-1. **Offense Bot (ZK Certified Searcher):** Searches for arbitrage and liquidation opportunities, proves fairness via real Groth16 proof WASM+ZKEY, and submits via Flashbots - **fair MEV only** per policy `allow_arbitrage=true, allow_sandwich=false`. Arbitrage compares live prices across 2 pools via `slot0` sqrtPriceX96 + QuoterV2 real quote, not hardcoded ETH=3000 USDC + 10% liquidity guess (fixed). Liquidations via Aave `getReservesList` + subgraph watchlist.
+1. **Offense Bot (ZK Certified Searcher):** Searches for arbitrage and liquidation opportunities, proves fairness via real Groth16 proof WASM+ZKEY, and submits via Flashbots - **fair MEV only** per policy `allow_arbitrage=true, allow_sandwich=false`. **Scope note (pilot repo):** the offense bot is NOT shipped in this pilot-facing repo. It lives in a private `protean-offense-tools` repository and is loaded only when the operator sets `PROTEAN_OFFENSE_TOOLS_PATH` (see `app/bots/offense_loader.py`; without it every offense route returns 503). The prior README text described arbitrage via `slot0` sqrtPriceX96 + QuoterV2 real quote, and liquidations via Aave `getReservesList`; note that **liquidation scanning was never fully implemented** - the call retrieved `getReservesList` and stopped; a subgraph/borrower watchlist was never built. This is a known, honest gap, not a claim.
 
 2. **Defense Bot (ZK Fairness Guardian):** Intercepts user transactions via real WebSocket `eth_subscribe newPendingTransactions` (Alchemy/Infura via Vault, or public `wss://ethereum.publicnode.com` free), scores MEV vulnerability via real ML model `xgboost_protean_v2.joblib` (trained from curated Flashbots research, not random mock) + SHAP TreeExplainer, and routes via private mempool (Flashbots Protect) with ZK proof.
 
-3. **ZK XAI Coupling:** Proves that ML model decisions are correct and fair without revealing model weights. Model commitment `H(model_weights)` SHA256, input commitment `H(features)`, SHAP explanation + proof that explanation is correct w/o revealing model. Real Groth16 via `circuits/final_artifacts/` WASM 1.7M + ZKEY final 198K from real multi-party ceremony 3 participants + beacon.
+3. **ZK XAI Coupling:** Proves that ML model decisions are correct and fair without revealing model weights. Model commitment `H(model_weights)` SHA256, input commitment `H(features)`, SHAP explanation + proof that explanation is correct w/o revealing model. Real Groth16 via `circuits/final_artifacts/` WASM 1.7M + ZKEY final 297KB from real multi-party ceremony 3 participants + beacon.
 
 4. **Fairness Circuit:** On-chain and off-chain enforcement of fairness policy (max slippage 50 bps, no sandwich small users <1 ETH). Circom 2.1.6 `ModelCommitmentHasher` Poseidon(2), `FairnessPolicy` public modelCommitment/inputCommitment private valueEthScaled/slippageBps/isSandwich/isProtected/routerHash/minBalanceScaled/maxSlippageBps output isFair = slippageOk AND NOT sandwichBlocked AND NOT smallSandwichBlocked. Gnark Go version MiMC hash.
 
-5. **Sandwich Attack Logic (Previously Missing Brain - Now Implemented for Defensive Testing):** `app/bots/sandwich_detector.py` with real bracket mechanics: `decode_victim_swap()` real calldata decoding via `eth_abi` exactInputSingle `0x414bf389`, `predict_price_impact()` real QuoterV2, `build_sandwich_bracket()` buy-before (victim gas+1) + sell-after (victim gas-1) bracket, profit estimation. **But blocked per fairness policy v1.2.0** at 3 levels: Python `score_opportunity` is_fair=False, ZK circuit isFair=0, FairnessRegistry `require(isFairFromProof)` derives isFair from verified publicInputs[0] not caller bool. For defensive testing only to test defense bot protection via private mempool.
+5. **Sandwich Attack Logic (Previously Missing Brain - Moved to Private Repo):** The real bracket mechanics (`decode_victim_swap()` eth_abi decoding of `exactInputSingle` `0x414bf389`, `predict_price_impact()` QuoterV2, `build_sandwich_bracket()` buy-before/sell-after, `build_real_bundle()` signed EIP-1559 bundle) were implemented, then **moved out of this pilot-facing repo** (commit `319aceb`) into `protean-offense-tools` together with the offense bot. In this repo it is gated behind `PROTEAN_OFFENSE_TOOLS_PATH` and **absent**; `/api/sandwich/detect` returns 503 without it. It was for defensive testing only, blocked per fairness policy at 3 levels (Python `score_opportunity` is_fair=False, ZK circuit isFair=0, FairnessRegistry `require(isFairFromProof)`).
 
 ---
 
@@ -53,7 +53,7 @@ User Tx -> Private RPC -> Defense Bot (ZK Fairness Guardian)
                 |                  |
                 +-----------> Flashbots Protect / MEV Blocker (private mempool)
 
-Mempool Scan (Real WebSocket wss://ethereum.publicnode.com) -> Offense Bot (ZK Certified Searcher) + Sandwich Detector (Real Bracket Mechanics - Blocked Per Policy)
+Mempool Scan (Real WebSocket wss://ethereum.publicnode.com) -> Offense Bot (ZK Certified Searcher) + Sandwich Detector (Blocked Per Policy - loaded from private protean-offense-tools)
                 |
            [Arbitrage/Liquidation Opportunity - Real DEX price scanning slot0 + liquidity + QuoterV2]
                 |
@@ -77,7 +77,7 @@ See `docs/ARCHITECTURE.md` for full system architecture with Mermaid diagrams: S
 | Service | Path | Replicas | Description | Real vs Theater |
 |---------|------|----------|-------------|-----------------|
 | **API** | `app/main.py` | 3-10 HPA CPU 70% mem 80% | FastAPI control plane `/health`, `/analyze`, `/bot/offense/run`, `/zk/circuit`, `/policy`, `/regulatory/compliance/*` + real WebSocket `/ws` and `/ws/dashboard` with real mempool transactions, scoring, ZK, compliance, no mock `generateMockTx()` | Real - Fixed: now proxies to real Python backend with real mempool, no fake 200 ITEMS |
-| **Offense Bot** | `app/bots/offense_bot.py` | 2 PDB min 1 | ZK Certified Searcher arbitrage + liquidation (fair), price deviation via slot0 sqrtPriceX96 + QuoterV2 real quote, 1% liquidity conservative gov, not hardcoded 3000 USDC + 10% guess (fixed), ZK XAI via gnark mTLS PQC, bundle via Vault HSM | Real - Fixed crude math |
+| **Offense Bot** | `app/bots/offense_loader.py` (loads from private `protean-offense-tools` via `PROTEAN_OFFENSE_TOOLS_PATH`) | 2 PDB min 1 | ZK Certified Searcher arbitrage + liquidation (fair). **Not present in this pilot repo** - external module gated by env var; without it, offense routes 503. Liquidation scanning never fully implemented (getReservesList only, no subgraph watchlist). | Real (external) - not shipped here |
 | **Defense Bot** | `app/bots/defense_bot.py` | 3 PDB min 2 | ZK Fairness Guardian mempool subscription real WebSocket, risk scoring real xgboost, private relay Flashbots Protect, regulatory feedback PQC hybrid | Real |
 | **ZK Prover** | `app/zk/prover.py` + `app/zk/ingest.py` | 2-5 HPA 1CPU 4Gi req 4CPU 16Gi | Real Groth16 via WASM+ZKEY, no hash fabrication, `CircuitIngestor` wires real .zkey with no fallback SLSA hash verification, `snarkjs wtns calculate` + `groth16 prove` → `PROVED_REAL_GROTH16` + `verify OK` | Real - Fixed: removed `PROVED_DEV_DETERMINISTIC` SHA-256 slicing into pi_a/pi_b/pi_c |
 | **Regulatory** | `app/regulatory/api.py` | 2 | Compliance + Feedback + OFAC/FATF live feeds | Real - GAP1 |
@@ -132,8 +132,8 @@ See `docs/ARCHITECTURE.md` for full system architecture with Mermaid diagrams: S
 ## ZK - Real Ceremony (Not Theater)
 
 - **Circom:** `circuits/fairness_policy.circom` v1.2.0, circom 2.1.6, circomlib 2.0.5 comparators, poseidon, gates, bitify, ModelCommitmentHasher Poseidon(2), FairnessPolicy public modelCommitment/inputCommitment private valueEthScaled/slippageBps/isSandwich/isProtected/routerHash/minBalanceScaled/maxSlippageBps output isFair
-- **Gnark:** `circuits/gnark/fairness_policy.go`, gnark v0.9.0, bn128 Groth16, 20 Powers of Tau (demo Power 14 for quick)
-- **Ceremony:** Real `powersoftau new bn128 14`, 3 participants distinct entropy /dev/urandom base64 + OpenSSL rand + uuid+timestamp, `prepare phase2` → final 13M, `groth16 setup` 197K, `zkey contribute` 2 participants + beacon final 198K, `verification_key.json` 3.3K, `FairnessPolicyVerifier.sol` 7.8K, `circuit.hash` + `combined.hash` `f4f96c2ddd7a11e453fc60705bb13fb748e91e2a32726f6639c2276a370140a8` SLSA L3
+- **Gnark:** `circuits/gnark/fairness_policy.go`, gnark v0.9.0, bn128 Groth16, 14 Powers of Tau
+- **Ceremony:** Real `powersoftau new bn128 14`, 3 participants distinct entropy /dev/urandom base64 + OpenSSL rand + uuid+timestamp, `prepare phase2` → final 13M, `groth16 setup` 0000.zkey 201048B, `zkey contribute` + beacon final 297396B, `verification_key.json` 3.3K, `FairnessPolicyVerifier.sol` 7.8K, `circuit.hash` + `combined.hash` `d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41` SLSA L3, 613 constraints / 619 wires (snarkjs r1cs info)
 - **Real Proof:** `Poseidon([12345,67890]) = 11344094074881186137...` via circomlibjs, witness `/tmp/witness.wtns` 11K via `snarkjs wtns calculate WASM`, proof `PROVED_REAL_GROTH16` pi_a `6716437...` public `['1','11344...','12345...']` via `snarkjs groth16 prove ZKEY` + `verify OK`
 - **Ingest:** `app/zk/ingest.py` `CircuitIngestor` wires real .zkey with no fallback SLSA hash verification, fail-closed if missing
 - **Prover:** `app/zk/prover.py` - Fixed, no longer fabricates hash-based fake proof `PROVED_DEV_DETERMINISTIC` SHA-256 slicing into pi_a/pi_b/pi_c - Now uses real `CircuitIngestor` WASM+ZKEY, raises if fails, no cosmetic hash
@@ -161,7 +161,7 @@ See `docs/ARCHITECTURE.md` for full system architecture with Mermaid diagrams: S
 
 **Dashboard Integration:**
 - New NAV `SANDWICH DETECT` icon 🥪
-- New component `src/components/SandwichDetector.jsx` - Real detection UI: Live mempool potential victims, Detect Sandwich button → calls `/api/sandwich/detect` POST victim_tx_hash, shows victim, buy-before, sell-after, profit, blocked reasons at 3 levels: Python pre-check is_fair=False + ZK circuit isFair=0 + FairnessRegistry require(isFairFromProof), plumbing details, fairness note, recent opportunities BLOCKED_PER_POLICY
+- New component `src/components/SandwichDetector.jsx` - detection UI calling `/api/sandwich/detect`; **backed by the private `protean-offense-tools` module (503 unless `PROTEAN_OFFENSE_TOOLS_PATH` is set)**. When loaded it shows victim, buy-before, sell-after, profit, blocked reasons at 3 levels: Python pre-check is_fair=False + ZK circuit isFair=0 + FairnessRegistry require(isFairFromProof), plumbing details, fairness note, recent opportunities BLOCKED_PER_POLICY
 
 ---
 
@@ -212,15 +212,15 @@ See `docs/ARCHITECTURE.md` for full system architecture with Mermaid diagrams: S
 cd ~/defense
 cp .env.example .env  # Fill QRYPT_API_TOKEN, AWS_CLOUDHSM, EVM_RPC_URL Alchemy/Infura from Vault, etc.
 export PATH=/home/user/node_modules/.bin:$PATH
-export ZK_CIRCUIT_HASH=$(cat circuits/final_artifacts/combined.hash)  # f4f96c2ddd7a...
+export ZK_CIRCUIT_HASH=$(cat circuits/final_artifacts/combined.hash)  # d80e3987...
 python scripts/wire_zkey_ingest.py  # Real artifacts wired, witness 11K, proof PROVED_REAL_GROTH16 OK
 
 pip install -r requirements.enterprise.txt  # Exact == with hashes
-# Real ZK artifacts already in final_artifacts/ WASM 1.7M + ZKEY 198K
+# Real ZK artifacts already in final_artifacts/ WASM 1.7M + ZKEY 297KB
 
 # Start real Python API
 uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 2
-# Real FastAPI: /health with model_hash 9d271370..., circuit_hash f4f96c2d..., /analyze real xgboost + SHAP + ZK, /regulatory/compliance/check real OFAC/FATF live, /metrics Prometheus, /ws real mempool
+# Real FastAPI: /health with model_hash 9843c560..., circuit_hash d80e3987..., /analyze real xgboost + SHAP + ZK, /regulatory/compliance/check real OFAC/FATF live, /metrics Prometheus, /ws real mempool
 
 # In other terminal, start real frontend
 npm install  # Root package.json: react, three, express, ws, vite, tsx
@@ -291,7 +291,7 @@ python scripts/enterprise_verification.py
 
 **Packages:**
 - `defense-code.zip` 3.6M - Code only, no large artifacts (WASM/ZKEY excluded), suitable for `git push origin master`, need to generate circuits via `run_ceremony.sh`
-- `defense-full.zip` 8.5M - Full program for local download with docs, k8s, scripts, models 74K, final_artifacts WASM 1.7M + ZKEY 198K + verification_key.json + circuit.hash + combined.hash `f4f96c2ddd7a...` + ceremony_transcript, architecture.png 1.6M
+- `defense-full.zip` 8.5M - Full program for local download with docs, k8s, scripts, models 74K, final_artifacts WASM 1.7M + ZKEY 297KB + verification_key.json + circuit.hash + combined.hash `d80e3987...` + ceremony_transcript, architecture.png 1.6M
 - `defense-circuits.zip` 4.0M - Circuits only final_artifacts + fairness_policy.circom + gnark + ceremony script
 
 **Real .zkey Wired:** `app/zk/ingest.py` `CircuitIngestor` loads from `circuits/final_artifacts/` (persists, not `build/` excluded from snapshots), verifies SHA256 SLSA vs `ZK_CIRCUIT_HASH`, generates real witness + proof via snarkjs, fail-closed

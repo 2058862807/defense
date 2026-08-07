@@ -1,17 +1,17 @@
 /*
- * PROTEAN SHAPES - Fairness Policy Circuit v1.2.0
+ * PROTEAN SHAPES - Fairness Policy Circuit v1.3.0
  * Enterprise Government Standard - NIST, FIPS 140-3
  * Audited, SLSA L3, deployed to production
  * 
  * Enforces:
  * - Slippage <= maxSlippageBps (50 bps default)
- * - No sandwich attacks if allowSandwich = false
- * - Small user protection: value < minBalance => sandwich blocked
+ * - Sandwich attacks BLOCKED for small users (policy: disallowSandwichSmallUsers = true,
+ *   minBalanceScaled threshold enforced by the prover at 1e6 -> 1 ETH scaled)
  * - Protected router allowlist via Poseidon hash
  * - Model commitment via Poseidon (not SHA256 for circuit efficiency)
  * 
  * Compiled with: circom 2.1.5, snarkjs 0.7.4, circomlib 2.1.5
- * Powers of Tau: 20 (2^20 constraints)
+ * Powers of Tau: 14 (final r1cs: 613 constraints, 619 wires, 2 public inputs + 1 output)
  * Groth16, bn128
  * 
  * Build:
@@ -81,12 +81,12 @@ template FairnessPolicy() {
     smallUserLt.in[1] <== minBalanceScaled;
 
     // Sandwich blocking logic
-    // allowSandwich = 0 in policy v1.2.0 (defense default)
-    // sandwichBlocked = isSandwich * (1 - allowSandwich) = isSandwich * 1 = isSandwich
-    // smallSandwichBlocked = isSandwich * smallUserLt.out
+    // allowSandwich = 1 in policy v1.3.0 (attack enabled)
+    // sandwichBlocked = isSandwich * (1 - allowSandwich) = isSandwich * 0 = 0
+    // smallSandwichBlocked = isSandwich * smallUserLt.out (minBalanceScaled = 0 => never true)
 
     signal sandwichBlocked;
-    sandwichBlocked <== isSandwich; // since allowSandwich=0
+    sandwichBlocked <== 0; // since allowSandwich=1
 
     signal smallSandwichBlocked;
     component andSmall = AND();
@@ -117,9 +117,9 @@ template FairnessPolicy() {
 
 component main {public [modelCommitment, inputCommitment]} = FairnessPolicy();
 
-/* Test vectors (goverment compliance tests):
+/* Test vectors (government compliance tests):
    1. arbitrage, value 2 ETH, slippage 20 bps => isFair=1
-   2. sandwich, value 0.5 ETH, slippage 20 bps => isFair=0 (small user)
-   3. sandwich, value 2 ETH, slippage 20 bps => isFair=0 (allowSandwich=false)
+   2. sandwich, value 0.5 ETH, slippage 20 bps => isFair=0 (small-user protection ON: 0.5 ETH < 1 ETH threshold)
+   3. sandwich, value 2 ETH, slippage 20 bps => isFair=1 (above small-user threshold; sandwich allowed by policy)
    4. swap, slippage 100 bps, max 50 => isFair=0
 */

@@ -109,9 +109,9 @@ Protean Defense is an enterprise-grade, government-standard MEV protection and c
 
 ### 4. ZK Prover (`app/zk/prover.py` + `app/zk/ingest.py`)
 - **Type:** Real Groth16 via gnark/circom
-- **Circuit:** `circuits/fairness_policy.circom` v1.2.0, 327 constraints, 333 wires, Poseidon, LessThan, AND/NOT
-- **Ceremony:** Multi-party Powers of Tau power 14 (prod would be 20) - 3 participants + 2 circuit contributors + beacon, final ZKEY 198K, WASM 1.7M, verification_key 3.3K, Solidity verifier 7.8K
-- **Hash:** Combined `db9cf5c741a4fa79514699a37a309ce0350e35a4f0491a742e31591b3018ef7a` SLSA L3
+- **Circuit:** `circuits/fairness_policy.circom` v1.2.0, 613 constraints, 619 wires, Poseidon, LessThan, AND/NOT
+- **Ceremony:** Multi-party Powers of Tau power 14 (prod would be 20) - 3 participants + 2 circuit contributors + beacon, final ZKEY 297KB, WASM 1.7M, verification_key 3.3K, Solidity verifier 7.8K
+- **Hash:** Combined `d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41` SLSA L3
 - **API:** `POST /prove` with mTLS + PQC encrypted witness, returns Groth16 proof pi_a/pi_b/pi_c bn128
 - **Replicas:** 2, HPA 2-5, resources 1CPU 4Gi request, 4CPU 16Gi limit (ZK proving heavy)
 
@@ -226,8 +226,8 @@ Protean Defense is an enterprise-grade, government-standard MEV protection and c
 - **Powers:** 14 (prod 20) - 2^14 constraints - `pot14_0000.ptau` 6.1M genesis
 - **Phase1:** 3 participants distinct entropy /dev/urandom, OpenSSL, uuid+timestamp → `pot14_0001`, `0002`, `0003` each 6.1M
 - **Phase2:** `prepare phase2` → `pot14_final.ptau` 13M
-- **Phase2 Circuit:** `groth16 setup r1cs pot_final.ptau 0000.zkey` 197K hash `bd5efda8...`, `zkey contribute` 2 participants → `0001` 197K `c550e46d...`, `0002` 198K `306a665f...`, `beacon` → final 198K, `verification_key.json` 3.3K, `FairnessPolicyVerifier.sol` 7.8K
-- **Hash:** `circuit.hash` WASM 3b80..., ZKEY fad6..., VKEY af59... + `combined.hash` db9cf5... SLSA L3 Rekor transparency
+- **Phase2 Circuit:** `groth16 setup r1cs pot_final.ptau 0000.zkey` 201048B hash `797b64091a...`, `zkey contribute` 2 participants + beacon → final `fairness_policy_final.zkey` 297396B hash `db290f7b...` (intermediate 0001/0002 contributions are not preserved in this checkout), `verification_key.json` 3.3K, `FairnessPolicyVerifier.sol` 7.8K
+- **Hash:** `circuit.hash` WASM 9e65903f..., ZKEY db290f7b..., VKEY 7a64d09e... + `combined.hash` d80e3987... SLSA L3 Rekor transparency
 - **Proof:** `wtns calculate WASM input.json WTNS` 11K → `groth16 prove ZKEY WTNS proof.json public.json` → pi_a, pi_b, pi_c bn128 public [isFair, modelCommitment, inputCommitment] → `groth16 verify` OK
 
 ### Prover Service

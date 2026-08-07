@@ -32,10 +32,10 @@ No auth required. Real health checks: model loaded, prover reachable, vault auth
   "status": "ok",
   "env": "production",
   "version": "2.0.0-enterprise",
-  "model_hash": "9d271370d0c4a2f6...",
+  "model_hash": "9843c560...",
   "model_version": "2.0.0-enterprise",
   "policy_version": "1.2.0",
-  "zk_circuit_hash": "db9cf5c741a4fa79514699a37a309ce0350e35a4f0491a742e31591b3018ef7a",
+  "zk_circuit_hash": "d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41",
   "zk_prover_reachable": true,
   "fips_compliance": "FIPS-140-3 + FIPS-203",
   "slsa_level": "L3"
@@ -82,7 +82,7 @@ Analyze transaction for MEV risk + fairness via ZK XAI coupling.
   "zk_status": "PROVED_REAL_GROTH16",
   "zk_proof_present": true,
   "commitments": {
-    "model_commitment": "9d271370...",
+    "model_commitment": "9843c560...",
     "input_commitment": "abc123...",
     "score_commitment": "def456...",
     "shap_commitment": "ghi789...",
@@ -95,17 +95,17 @@ Analyze transaction for MEV risk + fairness via ZK XAI coupling.
     "feature_names": ["gas_price_gwei", "value_eth", "slippage_bps", "pool_liquidity", "tx_count", "is_router", "is_protected"],
     "base_value": 0.5,
     "input": [[0.5, 0.5, 0.01, 0.1, 0.01, 1, 1]],
-    "model_hash": "9d271370...",
+    "model_hash": "9843c560...",
     "shap_version": "0.46.0"
   },
   "onchain_hash": "0xabc... (FairnessRegistry tx)",
   "action": "PROTECT_PRIVATE",
   "policy_version": "1.2.0",
-  "model_hash": "9d271370...",
+  "model_hash": "9843c560...",
   "provenance": {
-    "model_hash": "9d271370...",
+    "model_hash": "9843c560...",
     "training_data_hash": "1325...",
-    "circuit_hash": "db9cf5c7...",
+    "circuit_hash": "d80e3987...",
     "timestamp": 1722360000,
     "fips": "140-3"
   }
@@ -151,7 +151,7 @@ Get circom + gnark circuit source.
   "circom": "pragma circom 2.1.5; ...",
   "gnark": "package fairness ...",
   "policy": {"max_slippage_bps": 50, ...},
-  "circuit_hash": "db9cf5c7...",
+  "circuit_hash": "d80e3987...",
   "slsa_provenance": "SLSA L3, cosign signed, FIPS 140-3"
 }
 ```
@@ -180,7 +180,7 @@ Get fairness policy.
   },
   "version": "1.2.0",
   "compliance": "NIST-SP-800-53, FedRAMP High, FIPS",
-  "circuit_hash": "db9cf5c7..."
+  "circuit_hash": "d80e3987..."
 }
 ```
 

@@ -13,8 +13,7 @@ WORKDIR /app
 # Copy requirements with hashes
 COPY requirements.enterprise.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --require-hashes -r requirements.enterprise.txt || \
-    pip install --no-cache-dir -r requirements.enterprise.txt && \
+    pip install --no-cache-dir --require-hashes -r requirements.enterprise.txt && \
     pip install --no-cache-dir grpcio grpcio-tools prometheus-client
 
 # Copy app

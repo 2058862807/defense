@@ -17,6 +17,31 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def normalize_features(gas_price_gwei, value_eth, slippage_bps, pool_liquidity_eth,
+                       tx_count_in_block, is_router, is_protected_user):
+    """
+    Single canonical feature scale shared by training and inference.
+
+    Raw on-chain quantities are winsorized into the training envelope and
+    normalized exactly once here, so the model never sees a different scale
+    at scoring time than it was trained on.
+    """
+    gas_f = min(float(gas_price_gwei), 10_000.0) / 100.0
+    value_f = float(value_eth)
+    slippage_f = min(float(slippage_bps), 10_000.0) / 10_000.0
+    liquidity_f = float(pool_liquidity_eth) / 10_000.0
+    tx_count_f = float(tx_count_in_block) / 100.0
+    return np.array([
+        gas_f,
+        value_f,
+        slippage_f,
+        liquidity_f,
+        tx_count_f,
+        float(is_router),
+        float(is_protected_user),
+    ], dtype=np.float64)
+
 # Import ML deps - these are enterprise pinned versions
 import joblib
 try:
@@ -140,18 +165,19 @@ class ProteanScorerEnterprise:
                 h.update(chunk)
         return h.hexdigest()
 
-    def _create_commitment(self):
+    def _create_commitment(self, metrics: Dict[str, Any] = None):
         model_hash = self._hash_model_file(self.model_path)
         commitment = {
             "model_hash": model_hash,
-            "version": "2.0.0-enterprise",
+            "version": "2.1.0-realpolygon",
             "training_data_hash": self._hash_training_data(),
             "policy_version": settings.fairness_policy_version,
             "fips_compliance": "FIPS-140-3",
             "built_by": "protean-training-pipeline",
-            "slsa_provenance": "SLSA L3"
+            "slsa_provenance": "SLSA L3",
         }
-        # In production, sign commitment with cosign / ECDSA
+        if metrics:
+            commitment.update(metrics)
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.commitment_path, 'w') as f:
             json.dump(commitment, f, indent=2)
@@ -177,7 +203,14 @@ class ProteanScorerEnterprise:
 
         loader = DatasetLoader()
         X, y = loader.load_historical_mev_labels()
-        
+        # Normalize exactly as inference does (featurize) so train and serve
+        # share one feature scale. The parquet stores raw on-chain values.
+        X = np.array([
+            normalize_features(*row)
+            for row in X
+        ])
+        y = np.array(y)
+
         # Train/test split deterministic
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
@@ -190,7 +223,8 @@ class ProteanScorerEnterprise:
                 colsample_bytree=0.8,
                 random_state=42,
                 n_jobs=1,  # deterministic
-                eval_metric="logloss"
+                eval_metric="logloss",
+                enable_categorical=False,  # all features are numeric; shap 0.52 cannot parse categorical-split trees
             )
         else:
             model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=1)
@@ -212,7 +246,20 @@ class ProteanScorerEnterprise:
         joblib.dump(model, self.model_path)
         os.chmod(self.model_path, 0o600)
         self.model = model
-        self._create_commitment()
+        self._create_commitment({
+            "training_rows": len(X),
+            "train_rows": len(X_train),
+            "test_rows": len(X_test),
+            "positive_rate": float(y.mean()),
+            "cv_roc_auc_mean": float(cv_scores.mean()),
+            "cv_roc_auc_std": float(cv_scores.std()),
+            "test_roc_auc": float(auc),
+            "train_roc_auc": float(roc_auc_score(y_train, model.predict_proba(X_train)[:, 1])),
+            "model_path": str(self.model_path),
+            "dataset_path": "models/historical_mev_dataset.parquet",
+            "circuit_hash": settings.zk_circuit_hash,
+            "signed": False,
+        })
         logger.info(f"Enterprise model trained and saved to {self.model_path} AUC={auc:.3f}")
 
     def featurize(self, tx_data: Dict[str, Any]) -> np.ndarray:
@@ -230,24 +277,20 @@ class ProteanScorerEnterprise:
             is_router = float(tx_data.get("is_router", 0))
             is_protected = float(tx_data.get("is_protected_user", 0))
 
-            # Range checks (fail closed on invalid)
-            if not (0 <= gas <= 10000):
+            # Range checks (fail closed on invalid). Bounds are real-world
+            # envelopes: Polygon mainnet gas has spiked past 10,000 gwei (the
+            # original Ethereum-era ceiling), so a hard fail there rejects
+            # legitimate live mempool traffic.
+            if not (0 <= gas <= 1_000_000):
                 raise ValueError(f"gas_price_gwei out of range: {gas}")
-            if not (0 <= value <= 1000000):
+            if not (0 <= value <= 1_000_000_000):
                 raise ValueError(f"value_eth out of range: {value}")
-            if not (0 <= slippage <= 10000):
+            if not (0 <= slippage <= 1_000_000):
                 raise ValueError(f"slippage_bps out of range: {slippage}")
 
-            features = [
-                gas / 100.0,
-                value,
-                slippage / 10000.0,
-                liquidity / 10000.0,
-                tx_count / 100.0,
-                is_router,
-                is_protected
-            ]
-            return np.array(features, dtype=np.float64).reshape(1, -1)
+            return normalize_features(
+                gas, value, slippage, liquidity, tx_count, is_router, is_protected
+            ).reshape(1, -1)
         except (TypeError, ValueError) as e:
             logger.error(f"Featurization failed: {e}")
             raise

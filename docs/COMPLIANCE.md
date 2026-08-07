@@ -26,7 +26,7 @@
 ## What Is Genuinely Real (Not Theater) After Fixes
 
 ### Real ZK Ceremony (Not Mock)
-- **Powers of Tau:** Real `powersoftau new bn128 14`, 3 participants distinct entropy `/dev/urandom base64` + `OpenSSL rand` + `uuid+timestamp`, contributions Hash `32a31088...`, `e3911175...`, `13cb709c...`, `prepare phase2` → final 13M, `groth16 setup` 197K hash `bd5efda8...`, `zkey contribute` 2 participants `c550e46d...` + `306a665f...`, beacon final 198K, `verification_key.json` 3.3K groth16 bn128 nPublic 3, `FairnessPolicyVerifier.sol` 7.8K, `circuit.hash` + `combined.hash` `f4f96c2ddd7a...` SLSA L3, transcript with hashes
+- **Powers of Tau:** Real `powersoftau new bn128 14`, 3 participants distinct entropy `/dev/urandom base64` + `OpenSSL rand` + `uuid+timestamp`, `prepare phase2` → final 13M, `groth16 setup` 0000.zkey 201048B hash `797b6409...`, `zkey contribute` 2 participants + beacon → final 297396B (intermediate contribution hashes not preserved in this checkout), `verification_key.json` 3.3K groth16 bn128 nPublic 3, `FairnessPolicyVerifier.sol` 7.8K, `circuit.hash` + `combined.hash` `d80e3987...` SLSA L3, transcript with hashes
 - **Real Proof:** `Poseidon([12345,67890]) = 11344094074881186137...` via circomlibjs, witness `/tmp/witness.wtns` 11K via `snarkjs wtns calculate WASM`, proof `PROVED_REAL_GROTH16` pi_a `6716437...` public `['1','11344...','12345...']` via `snarkjs groth16 prove ZKEY` + `snarkjs groth16 verify OK` - real Groth16 bn128, not hash-formatted fake
 
 ### Theater Fixed
@@ -135,7 +135,7 @@ If you plug in funded wallet, real RPC/WS endpoint, relay URL, code would actual
 
 - **Source:** GitHub repo `https://github.com/2058862807/defense`
 - **Build:** `pip-compile --generate-hashes`, `pip-audit --strict`, `cyclonedx-py` SBOM, Bandit SAST, Trivy scan, `cosign sign-blob` SBOM + circuit artifacts + Docker images - **real code in `.github/workflows/enterprise-ci.yml`**
-- **Provenance:** `combined.hash` `db9cf5c7...` WASM+ZKEY, `circuit.hash`, model commitment SHA256, DSSE attestation via Rekor transparency - **real, we executed ceremony and have transcript with hashes**
+- **Provenance:** `combined.hash` `d80e3987...` WASM+ZKEY, `circuit.hash`, model commitment SHA256, DSSE attestation via Rekor transparency - **real, we executed ceremony and have transcript with hashes**
 - **Verification:** `snarkjs zkey export verificationkey`, `CircuitIngestor._verify_hash` SLSA provenance failure if mismatch - **real**
 - **Deployment:** Distroless nonroot SLSA L3 label - **real**
 - **This part is actually SLSA L3 compliant in terms of provenance generation**, but formal SLSA L3 certification would require SLSA verifier checking provenance

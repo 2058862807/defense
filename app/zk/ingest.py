@@ -28,6 +28,7 @@ from typing import Dict, Any, Tuple
 
 from app.core.config import settings
 from app.core.logging import audit_log
+from app.zk.snarkjs import resolve_snarkjs
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +150,7 @@ class CircuitIngestor:
         # Try snarkjs to verify
         try:
             result = subprocess.run(
-                ["snarkjs", "zkey", "export", "verificationkey", str(self.zkey_path), "/tmp/vkey_check.json"],
+                [resolve_snarkjs(), "zkey", "export", "verificationkey", str(self.zkey_path), "/tmp/vkey_check.json"],
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -192,7 +193,7 @@ class CircuitIngestor:
         # Generate witness via snarkjs wtns calculate - REAL, NO MOCK
         try:
             result = subprocess.run(
-                ["snarkjs", "wtns", "calculate", str(self.wasm_path), str(input_path), str(wtns_path)],
+                [resolve_snarkjs(), "wtns", "calculate", str(self.wasm_path), str(input_path), str(wtns_path)],
                 capture_output=True,
                 text=True,
                 timeout=60
@@ -222,7 +223,7 @@ class CircuitIngestor:
         # Real proof via snarkjs groth16 prove
         try:
             result = subprocess.run(
-                ["snarkjs", "groth16", "prove", str(self.zkey_path), str(witness_path), str(proof_path), str(public_path)],
+                [resolve_snarkjs(), "groth16", "prove", str(self.zkey_path), str(witness_path), str(proof_path), str(public_path)],
                 capture_output=True,
                 text=True,
                 timeout=120
@@ -237,7 +238,7 @@ class CircuitIngestor:
 
             # Verify proof immediately via snarkjs groth16 verify - fail closed if invalid
             verify_result = subprocess.run(
-                ["snarkjs", "groth16", "verify", str(self.vkey_path), str(public_path), str(proof_path)],
+                [resolve_snarkjs(), "groth16", "verify", str(self.vkey_path), str(public_path), str(proof_path)],
                 capture_output=True,
                 text=True,
                 timeout=30
@@ -276,7 +277,7 @@ class CircuitIngestor:
         output_path = Path(output_path or "contracts/verifiers/FairnessPolicyVerifier.sol")
         try:
             result = subprocess.run(
-                ["snarkjs", "zkey", "export", "solidityverifier", str(self.zkey_path), str(output_path)],
+                [resolve_snarkjs(), "zkey", "export", "solidityverifier", str(self.zkey_path), str(output_path)],
                 capture_output=True,
                 text=True,
                 timeout=30

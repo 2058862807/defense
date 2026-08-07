@@ -1,0 +1,11 @@
+{
+  "verifier_address": "0x624331b96A857dfa2e021CD8c149b4813C38dD7C",
+  "deploy_tx": "0xc930f11dd11057ecd6231b8e9de59d3e2a08583bc902c8a41fb647c1ff1d58f3",
+  "set_verifier_tx": "0x58205425b1f8c386a4d6c5b332a6b960ddc39ded0570a1cb50ebd6c6fbed67b8",
+  "deployer": "0xf7EB6B9aEDA6bfD232D03a7d682d0e23Cb1b90E7",
+  "chain_id": 137,
+  "circuit_hash": "d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41",
+  "policy_version": "1.3.0",
+  "verified_onchain": true,
+  "timestamp": 1785775504.6116989
+}

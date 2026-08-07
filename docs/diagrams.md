@@ -76,7 +76,7 @@ graph LR
     K6[k6 1000 VUs] --> API
     API --> Ingestion[Ingestion Pipeline mempool->Kafka->scoring]
     Ingestion --> Scoring[Scoring xgboost+shap]
-    Scoring --> ZK[ZK Proof Generation WASM+ZKEY 1.7M+198K]
+    Scoring --> ZK[ZK Proof Generation WASM+ZKEY 1.7M+297KB]
     ZK --> Verification[Verification Groth16 bn128 OK]
     WebSocket[WebSocket 1000 Concurrent] --> Mempool[Mempool Connector eth_subscribe]
     WebSocket --> UI[UI Frame Rates]

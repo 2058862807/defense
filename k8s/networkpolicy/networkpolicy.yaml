@@ -1,0 +1,72 @@
+# Zero-trust NetworkPolicy for the protean-prod namespace: deny-by-default.
+# Only explicitly permitted ingress/egress is allowed (NIST SP 800-207).
+# Operator-supplied pod network CIDRs belong here (Tier 1).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: protean-prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-ingress
+  namespace: protean-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP
+    # Public ingress through the operator's gateway/ingress controller.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: protean-monitoring
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-service-egress
+  namespace: protean-prod
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Service-to-service within the namespace.
+    - to:
+        - podSelector: {}
+    # Outbound to the operator's allowed public endpoints (EVM RPC, relay,
+    # vault, siem). CIDRs are operator-supplied (Tier 1).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - port: 443
+          protocol: TCP

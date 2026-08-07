@@ -1,3 +1,7 @@
+# DEPRECATED - NOT included in kustomization.yaml. This standalone prover
+# microservice no longer exists: ZK proving runs in-process inside the api pod
+# via CircuitIngestor (snarkjs groth16 + WASM + ZKEY), and app/zk/prover.py has
+# no `--server` entrypoint. Retained for history only.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

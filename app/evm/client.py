@@ -5,14 +5,13 @@ Government: FIPS 140-3 TLS, fail-closed on missing secrets
 import logging
 from typing import Dict, Any, Optional, List
 from web3 import Web3
-from web3.middleware import ExtraDataToPOAMiddleware
-from eth_account import Account
-from eth_account.signers.local import LocalAccount
-import json
-
+try:
+    from web3.middleware import ExtraDataToPOAMiddleware as PoAMiddleware
+except ImportError:
+    from web3.middleware import geth_poa_middleware as PoAMiddleware
 from app.core.config import settings
 from app.core.circuit_breaker import evm_breaker
-
+from app.hsm.custody import HSMBackedAccount, get_account
 logger = logging.getLogger(__name__)
 
 class EVMClientEnterprise:
@@ -24,55 +23,32 @@ class EVMClientEnterprise:
         # Web3 HTTP with TLS - enterprise provider
         self.w3_http = Web3(Web3.HTTPProvider(self.rpc_url, request_kwargs={"timeout": 10, "verify": True}))
         # PoA middleware for L2s if needed
-        self.w3_http.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+        self.w3_http.middleware_onion.inject(PoAMiddleware, layer=0)
 
         if not self.w3_http.is_connected():
             if settings.is_production():
                 raise ConnectionError(f"EVM RPC not connected: {self.rpc_url}")
             logger.warning(f"EVM RPC not connected (dev mode): {self.rpc_url}")
 
-        # Signer loaded from Vault HSM - no private key in env in prod
-        self.account: Optional[LocalAccount] = None
+        # Signer loaded through the custody chokepoint - no ad-hoc key loading.
+        self.account: Optional[HSMBackedAccount] = None
         self._load_signer_from_vault()
 
         # WebSocket for mempool subscription (defense bot)
         self.w3_ws: Optional[Web3] = None
 
     def _load_signer_from_vault(self):
-        """Enterprise: load private key from Vault HSM, never from env file"""
+        """Enterprise: resolve the signer through the custody chokepoint
+        (hardware HSM -> Vault Transit -> guarded software store). Fails closed
+        in production when no backend is available."""
         try:
-            from app.core.security import get_secret_from_vault
-            secret = get_secret_from_vault(
-                settings.vault_addr,
-                settings.vault_role_id,
-                settings.vault_secret_id.get_secret_value(),
-                self.vault_path
-            )
-            private_key = secret.get("private_key") or secret.get("evm_private_key")
-            if not private_key:
-                raise ValueError("Vault secret missing private_key")
-            # Validate key format
-            if not private_key.startswith("0x"):
-                private_key = "0x" + private_key
-            self.account = Account.from_key(private_key)
-            logger.info(f"EVM signer loaded from Vault {self.vault_path} address={self.account.address}")
-            # Zeroize private key material from memory (best effort)
-            del private_key
+            self.account = get_account()
+            logger.info(f"EVM signer loaded via custody address={self.account.address} custody={self.account.custody_source.value}")
         except Exception as e:
             if settings.is_production():
-                # In production, require Vault - fail closed
-                logger.error(f"Failed to load signer from Vault in production: {e}")
+                logger.error(f"Failed to load signer from custody in production: {e}")
                 raise
-            # Dev: try env if Vault not available
-            logger.warning(f"Vault signer load failed (dev mode): {e}, trying dev key")
-            # Do not load default 0x000... in prod
-            from app.core.config import settings as cfg
-            if cfg.env != "production" and cfg.evm_private_key:
-                try:
-                    self.account = Account.from_key(cfg.evm_private_key.get_secret_value())
-                    logger.info(f"Dev signer loaded address={self.account.address}")
-                except:
-                    pass
+            logger.error(f"Custody signer load failed (dev mode): {e}")
 
     def get_ws_client(self) -> Web3:
         if not self.w3_ws:
@@ -111,7 +87,7 @@ class EVMClientEnterprise:
             tx["from"] = self.account.address
         
         signed = self.account.sign_transaction(tx)
-        tx_hash = self.w3_http.eth.send_raw_transaction(signed.rawTransaction)
+        tx_hash = self.w3_http.eth.send_raw_transaction(signed.raw_transaction)
         logger.info(f"Transaction sent hash={tx_hash.hex()} from={self.account.address}")
         return tx_hash.hex()
 

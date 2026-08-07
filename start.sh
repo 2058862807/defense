@@ -219,19 +219,16 @@ else
   fi
 fi
 
-# 3. Verify requirements with hashes (defense)
+# 3. Verify requirements with hashes (defense) - fail closed, no fallback to
+#    an unverified install and no fallback to a weaker/nonexistent requirements file.
 echo "[*] Verifying dependencies with hashes (SLSA L3, gov standard)..."
-if [ -f "requirements.enterprise.txt" ]; then
-  pip install --require-hashes -r requirements.enterprise.txt 2>&1 | tail -n 5 || pip install -r requirements.enterprise.txt 2>&1 | tail -n 5
-  if command -v pip-audit &> /dev/null; then
-    pip-audit -r requirements.enterprise.txt --strict 2>&1 | tail -n 10 || echo "[!] pip-audit found issues - review per gov standard"
-  fi
-else
-  if [ -f "requirements.hardened.txt" ]; then
-    pip install --require-hashes -r requirements.hardened.txt 2>&1 | tail -n 5 || pip install -r requirements.hardened.txt 2>&1 | tail -n 5
-  else
-    pip install -r requirements.txt 2>&1 | tail -n 5 || echo "[!] No requirements file found"
-  fi
+if [ ! -f "requirements.enterprise.txt" ]; then
+  echo "[✗] requirements.enterprise.txt not found - refusing to install unpinned dependencies"
+  exit 1
+fi
+pip install --require-hashes -r requirements.enterprise.txt
+if command -v pip-audit &> /dev/null; then
+  pip-audit -r requirements.enterprise.txt --strict
 fi
 
 # 4. Check ZK artifacts - real .zkey wired, no fallback
@@ -255,7 +252,7 @@ fi
 
 # 5. Generate SBOM
 if command -v cyclonedx-py &> /dev/null; then
-  cyclonedx-py requirements -i requirements.enterprise.txt -o sbom.json 2>&1 | tail -n 5 || cyclonedx-py requirements -i requirements.hardened.txt -o sbom.json 2>&1 | tail -n 5 || echo "[!] SBOM generation failed"
+  cyclonedx-py requirements -i requirements.enterprise.txt -o sbom.json
   echo "[+] SBOM generated"
 fi
 
@@ -268,17 +265,28 @@ case $MODE in
     exec uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 2
     ;;
   offense)
+    if [ -z "$PROTEAN_OFFENSE_TOOLS_PATH" ]; then
+      echo "[✗] Offense bot lives in the separate protean-offense-tools repo, not this codebase."
+      echo "    Set PROTEAN_OFFENSE_TOOLS_PATH to a checkout of it to enable this mode."
+      exit 1
+    fi
     echo "[*] Starting OFFENSE bot - ZK Certified Searcher - Real Arbitrage, No Mock"
-    exec python -m app.bots.offense_bot --iterations 10000
+    export PYTHONPATH="${PROTEAN_OFFENSE_TOOLS_PATH}:${PYTHONPATH}"
+    exec python -m bots.offense_bot --iterations 10000
     ;;
   defense)
     echo "[*] Starting DEFENSE bot - ZK Fairness Guardian - Real Protection, No Mock"
     exec python -m app.bots.defense_bot --iterations 10000
     ;;
   both)
+    if [ -z "$PROTEAN_OFFENSE_TOOLS_PATH" ]; then
+      echo "[✗] Offense bot lives in the separate protean-offense-tools repo, not this codebase."
+      echo "    Set PROTEAN_OFFENSE_TOOLS_PATH to a checkout of it to enable this mode."
+      exit 1
+    fi
     echo "[*] Starting BOTH bots + API - Real Everything, No Mock"
     python -m app.bots.defense_bot --iterations 10000 &
-    python -m app.bots.offense_bot --iterations 10000 &
+    PYTHONPATH="${PROTEAN_OFFENSE_TOOLS_PATH}:${PYTHONPATH}" python -m bots.offense_bot --iterations 10000 &
     exec uvicorn app.main:app --host 0.0.0.0 --port 8080
     ;;
   *)

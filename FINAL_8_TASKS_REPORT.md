@@ -4,6 +4,11 @@
 **Version:** 2.0.0-enterprise + Real Ceremony  
 **Combined Circuit Hash:** `db9cf5c741a4fa79514699a37a309ce0350e35a4f0491a742e31591b3018ef7a` (SHA256 WASM+ZKEY)  
 **Compliance:** FIPS 140-3, FIPS 203, NIST SP 800-53, FedRAMP High, SLSA L3  
+
+> **CORRECTION (2026-08-05):** The combined hash and constraint figures in this dated
+> report were superseded by a claims-vs-evidence audit. Authoritative values: combined
+> `d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41`, model
+> `9843c560…`, **613 constraints / 619 wires**, powers of tau 14. See `README_PRODUCTION.md`.
 **Status:** ✅ ALL 8 TASKS VERIFIED - NO MOCKS, NO FALLBACK (PROD FAIL-CLOSED)
 
 ---

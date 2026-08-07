@@ -5,10 +5,14 @@ Government Standard: FIPS 140-3, ECDSA P-256, Vault, audit logging
 Features:
 - Token-based licensing (JWT with ECDSA P-256 signature)
 - Automated renewal via cron and Vault
-- API key management
-- Usage tracking via Redis + Postgres
+- API key management (metering store backed)
+- Usage tracking via the metering ledger (SQLite WAL + Postgres mirror)
 - Customer explanation portal backend
 - Tiered disclosure: Customer, Regulator, Audit views
+
+The signed license file is generated here; the durable entitlement state
+(grant token pool, API keys, usage events) lives in the metering store.
+licenses_db below is only a cache of issued signed artifacts.
 """
 
 from fastapi import FastAPI, Depends, HTTPException, Header, BackgroundTasks
@@ -19,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 import json
 
 from app.core.config import settings
+from app.metering.store import metering_store
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +33,8 @@ app = FastAPI(
     version="2.0.0-enterprise"
 )
 
-# In-memory for demo, would be Postgres in prod
+# Cache of issued signed license artifacts (entitlement state lives in metering store)
 licenses_db: Dict[str, Dict] = {}
-api_keys_db: Dict[str, Dict] = {}
-usage_db: Dict[str, Dict] = {}
 
 class LicenseIssueRequest(BaseModel):
     customer: str
@@ -78,13 +81,17 @@ def get_current_user_licensing(authorization: str = Header(...)):
 
 @app.get("/health")
 async def health():
+    from app.metering.migrate import grant_summary
+    grants = metering_store.list_grants()
     return {
         "status": "ok",
         "service": "licensing",
         "version": "2.0.0-enterprise",
         "licenses_count": len(licenses_db),
-        "api_keys_count": len(api_keys_db),
-        "fips": "140-3 + 186-4"
+        "grants_count": len(grants),
+        "api_keys_count": len(metering_store.list_keys()),
+        "fips": "140-3 + 186-4",
+        "metering": "store-backed"
     }
 
 @app.post("/licenses/issue")
@@ -107,17 +114,21 @@ async def issue_license(req: LicenseIssueRequest, user=Depends(get_current_user_
             private_key_path="licenses/licensing_private.pem"
         )
 
-        # Store in DB (Postgres in prod)
+        # Mint the matching metering grant (idempotent by license_id)
+        from app.metering.migrate import ensure_grant_for_license
+        grant = ensure_grant_for_license(license_data, store=metering_store)
+
+        # Cache the signed artifact (entitlement state lives in the grant)
         licenses_db[license_data["license_id"]] = license_data
 
         # Audit log
         try:
             from app.core.logging import audit_log
-            audit_log("LICENSE_ISSUED", user.get("sub"), "issue", license_data["license_id"], "SUCCESS", {"customer": req.customer, "tier": req.tier})
+            audit_log("LICENSE_ISSUED", user.get("sub"), "issue", license_data["license_id"], "SUCCESS", {"customer": req.customer, "tier": req.tier, "grant_id": grant["id"]})
         except:
             pass
 
-        return license_data
+        return {**license_data, "grant": {"grant_id": grant["id"], "token_pool": grant["token_pool"], "expires_at": grant["expires_at"]}}
 
     except Exception as e:
         logger.error(f"License issue failed: {e}")
@@ -156,9 +167,13 @@ async def renew_license(req: LicenseRenewRequest, user=Depends(get_current_user_
 
         licenses_db[req.license_id] = new_license
 
+        # Extend the metering grant to match
+        from app.metering.migrate import renew_grant_for_license
+        grant = renew_grant_for_license(new_license, store=metering_store)
+
         logger.info(f"License renewed: {req.license_id} new expiry {new_expiry.isoformat()}")
 
-        return new_license
+        return {**new_license, "grant": {"grant_id": grant["id"], "token_pool": grant["token_pool"], "expires_at": grant["expires_at"]}}
 
     except Exception as e:
         logger.error(f"License renewal failed: {e}")
@@ -168,6 +183,11 @@ async def renew_license(req: LicenseRenewRequest, user=Depends(get_current_user_
 async def get_license(license_id: str, user=Depends(get_current_user_licensing)):
     lic = licenses_db.get(license_id)
     if not lic:
+        # Fall back to the metering grant (covers restarted licensing server)
+        grant = metering_store.get_grant_by_purchase_order(license_id)
+        if grant:
+            from app.metering.migrate import grant_summary
+            return grant_summary(grant)
         raise HTTPException(404, "License not found")
     
     # Tiered disclosure: Customer sees limited, Regulator sees more, Audit sees all
@@ -194,90 +214,68 @@ async def get_license(license_id: str, user=Depends(get_current_user_licensing))
 @app.get("/licenses")
 async def list_licenses(user=Depends(get_current_user_licensing)):
     # Admin only
-    return {"licenses": list(licenses_db.values()), "count": len(licenses_db)}
+    from app.metering.migrate import grant_summary
+    grants = metering_store.list_grants()
+    return {
+        "licenses": [grant_summary(g) for g in grants],
+        "count": len(grants),
+        "signed_cached": len(licenses_db)
+    }
 
 # --- API Key Management ---
 
 @app.post("/api-keys/create")
 async def create_api_key(req: APIKeyCreateRequest, user=Depends(get_current_user_licensing)):
-    """Create API key tied to license - for connector"""
-    import secrets
-    import hashlib
+    """Create API key tied to license - for connector (metering store backed)."""
+    # Resolve the grant minted for this license (purchase_order = license_id)
+    grant = metering_store.get_grant_by_purchase_order(req.license_id)
+    if not grant:
+        raise HTTPException(404, f"License {req.license_id} not found / not issued via metering")
 
-    # Check license exists and valid
-    lic = licenses_db.get(req.license_id)
-    if not lic:
-        raise HTTPException(404, f"License {req.license_id} not found")
-
-    # Generate API key: prefix + random + checksum
-    # Format: protean_live_<random>_<checksum> for live, protean_test_ for test
-    prefix = "protean_live_" if settings.env == "production" else "protean_test_"
-    random_part = secrets.token_urlsafe(32)
-    checksum = hashlib.sha256(f"{random_part}{req.customer}".encode()).hexdigest()[:8]
-    api_key = f"{prefix}{random_part}_{checksum}"
-
-    # Store with metadata
-    api_keys_db[api_key] = {
-        "api_key": api_key,
-        "customer": req.customer,
-        "license_id": req.license_id,
-        "name": req.name,
-        "permissions": req.permissions,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "created_by": user.get("sub"),
-        "last_used": None,
-        "usage_count": 0,
-        "tier": lic["tier"],
-        "features": lic["features"]
-    }
+    key = metering_store.create_api_key(
+        customer_id=grant["customer_id"],
+        grant_id=grant["id"],
+        name=req.name,
+        permissions=req.permissions,
+    )
 
     logger.info(f"API key created: {req.name} for customer {req.customer} license {req.license_id}")
 
     return {
-        "api_key": api_key,
+        "api_key": key["api_key"],
         "name": req.name,
         "customer": req.customer,
         "license_id": req.license_id,
         "permissions": req.permissions,
-        "tier": lic["tier"]
+        "tier": grant["tier"]
     }
 
 @app.get("/api-keys")
-async def list_api_keys(license_id: Optional[str] = None, user=Depends(get_current_user_licensing)):
-    if license_id:
-        keys = [k for k in api_keys_db.values() if k["license_id"] == license_id]
-    else:
-        keys = list(api_keys_db.values())
-    
-    # Don't return full api_key in list, only prefix
+async def list_api_keys(license_id: Optional[str] = None, customer: Optional[str] = None, user=Depends(get_current_user_licensing)):
+    grant = metering_store.get_grant_by_purchase_order(license_id) if license_id else None
+    keys = metering_store.list_keys(
+        customer_id=customer,
+        grant_id=grant["id"] if grant else None,
+    )
+
     sanitized = []
     for k in keys:
         sanitized.append({
             "name": k["name"],
-            "customer": k["customer"],
-            "license_id": k["license_id"],
+            "customer": k["customer_id"],
             "permissions": k["permissions"],
             "created_at": k["created_at"],
-            "last_used": k["last_used"],
-            "usage_count": k["usage_count"],
-            "api_key_prefix": k["api_key"][:20] + "..."
+            "revoked_at": k["revoked_at"],
+            "api_key_prefix": k["key_prefix"]
         })
-    
+
     return {"api_keys": sanitized, "count": len(sanitized)}
 
 @app.delete("/api-keys/{api_key_prefix}")
 async def revoke_api_key(api_key_prefix: str, user=Depends(get_current_user_licensing)):
-    # Find key by prefix
-    found = None
-    for full_key in list(api_keys_db.keys()):
-        if full_key.startswith(api_key_prefix) or full_key[:20] in api_key_prefix:
-            found = full_key
-            break
-    
-    if not found:
+    revoked = metering_store.revoke_api_key(api_key_prefix)
+    if not revoked:
         raise HTTPException(404, "API key not found")
-
-    del api_keys_db[found]
     logger.info(f"API key revoked: {api_key_prefix} by {user.get('sub')}")
     return {"status": "revoked", "api_key_prefix": api_key_prefix}
 
@@ -285,51 +283,32 @@ async def revoke_api_key(api_key_prefix: str, user=Depends(get_current_user_lice
 
 @app.post("/usage/record")
 async def record_usage(record: UsageRecord):
-    """Record API usage - called by connector and API services"""
-    # In production, this would be Kafka -> Postgres + Redis
-    # For now, in-memory + log
+    """Record API usage - called by connector and API services.
 
-    api_key = record.api_key
-    if api_key not in api_keys_db:
-        # Allow but log unknown key
-        logger.warning(f"Usage record for unknown API key: {api_key[:20]}...")
+    Delegates to the metering ledger (zero-token audit event, no double-charge).
+    """
+    from app.connectors import usage as usage_tracker
 
-    # Update usage count for key
-    if api_key in api_keys_db:
-        api_keys_db[api_key]["usage_count"] += 1
-        api_keys_db[api_key]["last_used"] = record.timestamp
-
-    # Store in usage_db (Postgres in prod)
-    usage_key = f"{api_key}:{record.timestamp}"
-    usage_db[usage_key] = record.model_dump()
-
-    # Check limits per license tier
-    key_info = api_keys_db.get(api_key, {})
-    tier = key_info.get("tier", "dev")
-    # Example limits: dev 1000/day, enterprise 10000/day, enterprise_gov 100000/day
-    limits = {"dev": 1000, "enterprise": 10000, "enterprise_gov": 100000}
-    limit = limits.get(tier, 1000)
-
-    if key_info.get("usage_count", 0) > limit:
-        logger.warning(f"API key {api_key[:20]}... exceeded limit {limit} for tier {tier}")
-
+    usage_tracker.record_usage(
+        api_key=record.api_key,
+        endpoint=record.endpoint,
+        latency_ms=record.latency_ms,
+        status=record.status,
+        store=metering_store,
+    )
     return {"status": "recorded"}
 
 @app.get("/usage/stats")
 async def usage_stats(api_key: Optional[str] = None, customer: Optional[str] = None, user=Depends(get_current_user_licensing)):
-    """Get usage stats - for customer portal and tiered disclosure"""
-    filtered = list(usage_db.values())
-    
-    if api_key:
-        filtered = [u for u in filtered if u["api_key"] == api_key or u["api_key"].startswith(api_key)]
-    if customer:
-        # Need to join with api_keys_db to get customer
-        customer_keys = [k for k, v in api_keys_db.items() if v["customer"] == customer]
-        filtered = [u for u in filtered if u["api_key"] in customer_keys]
+    """Get usage stats - for customer portal and tiered disclosure."""
+    from app.connectors import usage as usage_tracker
 
-    total = len(filtered)
-    success = len([u for u in filtered if u["status"] < 400])
-    avg_latency = sum([u["latency_ms"] for u in filtered]) / total if total > 0 else 0
+    stats = usage_tracker.get_usage_stats(
+        api_key=api_key,
+        customer=customer,
+        days=7,
+        store=metering_store,
+    )
 
     # Tiered disclosure
     view = user.get("view", "customer")
@@ -337,28 +316,21 @@ async def usage_stats(api_key: Optional[str] = None, customer: Optional[str] = N
 
     if "audit" in roles or view == "audit":
         # Audit sees all
-        return {
-            "total_requests": total,
-            "success": success,
-            "error": total - success,
-            "avg_latency_ms": avg_latency,
-            "records": filtered[-100:],  # Last 100
-            "tier": "audit"
-        }
+        return {**stats, "tier": "audit"}
     elif "regulator" in roles or view == "regulator":
-        # Regulator sees aggregated + no PII
+        # Regulator sees aggregated
         return {
-            "total_requests": total,
-            "success": success,
-            "avg_latency_ms": avg_latency,
+            "total_requests": stats["total_requests"],
+            "success": stats["success"],
+            "avg_latency_ms": stats["avg_latency_ms"],
             "tier": "regulator"
         }
     else:
         # Customer sees own usage aggregated
         return {
-            "total_requests": total,
-            "success_rate": success / total if total > 0 else 0,
-            "avg_latency_ms": avg_latency,
+            "total_requests": stats["total_requests"],
+            "success_rate": stats["success_rate"],
+            "avg_latency_ms": stats["avg_latency_ms"],
             "tier": "customer"
         }
 
@@ -384,7 +356,7 @@ async def customer_explanation(customer: str, tx_hash: Optional[str] = None, use
         "action": "PROTECT_PRIVATE",
         "onchain_hash": "0xabc123...",
         "commitments": {
-            "model_commitment": "9d271370d0c4a2f6...",
+            "model_commitment": "9843c560...",
             "input_commitment": "input123...",
         },
         "explanation": {
@@ -398,9 +370,9 @@ async def customer_explanation(customer: str, tx_hash: Optional[str] = None, use
             "policy_version": "1.2.0"
         },
         "provenance": {
-            "model_hash": "9d271370...",
+            "model_hash": "9843c560...",
             "training_data_hash": "1325...",
-            "circuit_hash": "db9cf5c7...",
+            "circuit_hash": "d80e3987...",
             "qrng_provider": "Qrypt",
             "hsm_provider": "AWS CloudHSM",
             "ofac_source": "live treasury.gov",

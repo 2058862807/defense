@@ -208,25 +208,25 @@ def build_flash_loan_arbitrage_params(
     arbitrage_data: Dict[str, Any]
 ) -> bytes:
     """
-    Build params for flash loan callback
-    params will be passed to executeOperation and contain arbitrage instructions
+    Build params for flash loan callback (executeOperation).
+    ABI-encodes (address tokenMid, uint24 feeA, uint24 feeB, uint256 amountOutMin)
+    exactly as FlashLoanReceiver.sol decodes it. amountOutMin defaults to
+    break-even (amount + 5bps premium) so the tx reverts rather than take a loss.
     """
-    # Encode arbitrage data as bytes for callback
-    # In real Aave flash loan, you implement IFlashLoanSimpleReceiver or IFlashLoanReceiver
-    # executeOperation is called by Pool after transferring funds
-    # You do arbitrage inside executeOperation, then approve Pool to pull amount + premium
-    
-    import json
-    # Convert Decimal to float for JSON serialization
-    arbitrage_serializable = {}
-    for k, v in arbitrage_data.items():
-        if isinstance(v, Decimal):
-            arbitrage_serializable[k] = float(v)
-        else:
-            arbitrage_serializable[k] = v
-    
-    params_json = json.dumps(arbitrage_serializable)
-    return params_json.encode()
+    from eth_abi import encode as abi_encode
+    from web3 import Web3
+
+    token_mid = arbitrage_data.get("token_mid") or arbitrage_data.get("tokenOut")
+    if not token_mid:
+        raise ValueError("flash loan params require token_mid")
+    fee_a = int(arbitrage_data.get("fee_a", arbitrage_data.get("feeA", 3000)))
+    fee_b = int(arbitrage_data.get("fee_b", arbitrage_data.get("feeB", 3000)))
+    min_out = int(arbitrage_data.get("amount_out_min", 0)) or (int(amount) * 10005 // 10000)
+
+    return abi_encode(
+        ["address", "uint24", "uint24", "uint256"],
+        [Web3.to_checksum_address(token_mid), fee_a, fee_b, min_out],
+    )
 
 # Arbitrage with Flash Loan - Full Math
 

@@ -42,16 +42,17 @@ Mempool Scan -> Offense Bot (ZK Certified Searcher)
 - Model commitment: `H(model_weights)` stored in `models/commitment.json`
 - Input commitment: `H(features)`
 - SHAP explanation + proof that explanation is correct w/o revealing model
-- **Real Groth16 via `circuits/final_artifacts/` WASM 1.7M + ZKEY final 198K from real multi-party ceremony 3 participants + beacon, 327 constraints, combined hash `f4f96c2ddd7a...` SLSA L3, `PROVED_REAL_GROTH16` via `snarkjs wtns calculate` + `groth16 prove` + `verify OK`** - Fixed from previous mock `PROVED_DEV_DETERMINISTIC` hash fabrication
+- **Real Groth16 via `circuits/final_artifacts/` WASM 1.7M + ZKEY final 297KB from real multi-party ceremony 3 participants + beacon, 613 constraints, combined hash `d80e3987...` SLSA L3, `PROVED_REAL_GROTH16` via `snarkjs wtns calculate` + `groth16 prove` + `verify OK`** - Fixed from previous mock `PROVED_DEV_DETERMINISTIC` hash fabrication
 - Circuit breaker: if ZK prover down, degraded mode logs warning but still protects (manual verification queue) - fail-closed in prod if `REQUIRE_ZK_PROOF=true`
 
 **2. ZK Fairness EVM Bots (Offense & Defense)**
 
-**Offense Bot** (`app/bots/offense_bot.py`):
+**Offense Bot** (`app/bots/offense_bot.py` — **not shipped in this pilot repo**; loaded from the private `protean-offense-tools` repo via `PROTEAN_OFFENSE_TOOLS_PATH`. Offense routes return 503 without it):
 - Finds MEV but self-regulates: disallows sandwich on small users (<1 ETH), max 50 bps slippage, only allowlisted routers
 - Generates ZK proof that it respects policy via real `CircuitIngestor` WASM+ZKEY
 - Submits via Flashbots relay with proof in metadata, PQC encrypted bundle ML-KEM-768 + AES-256-GCM
 - On-chain `FairnessRegistry.sol` **real verification** `zkVerifier.verifyProof(pA,pB,pC,publicInputs)` + `require(verified)` + `isFair` derived from verified `publicInputs[0]` not caller bool - Fixed from previous theater that trusted caller `isFair` bool and had `authorizedSubmitters[address(0)]=true` open for demo
+- **Known gap:** liquidation scanning was never fully implemented (`getReservesList` only, no subgraph/borrower watchlist).
 
 **Defense Bot** (`app/bots/defense_bot.py`):
 - Scores user tx MEV vulnerability (0-1), explains via SHAP top feature
@@ -89,7 +90,7 @@ cp .env.example .env
 # 2. Build real ZK artifacts (if not present in final_artifacts/)
 cd circuits/ceremony
 ./run_ceremony.sh
-# Generates real .zkey with multi-party ceremony, 3 participants + beacon, 198K final, 1.7M WASM, combined hash f4f96c2d...
+# Generates real .zkey with multi-party ceremony, 3 participants + beacon, 297KB final, 1.7M WASM, combined hash d80e3987...
 cd ../..
 
 # 3. Wire real .zkey into ingest.py - no fallback
@@ -118,6 +119,84 @@ bash start.sh both  # Now real liboqs build, real model training from curated hi
 - `/regulatory/compliance/ofac/stats` + `/fatf/stats` + `/stats` + `/refresh` admin
 - `/regulatory/feedback` - JWT-protected, verifies ZK proof via real `snarkjs groth16 verify`, logs for compliance
 - `/regulatory/policy` - returns current fairness policy v1.2.0
+
+## Metered Token Licensing (C1 - product protection)
+
+Every external transaction analysis is **metered**: 1 token = 1 full analysis
+(score + SHAP + real Groth16 ZK proof + OFAC/FATF screening). Pilot customers
+receive a **fixed token pool valid 6 months** (no monthly rollover). When the
+pool is exhausted or the grant expires, every paid call returns **HTTP 402
+Payment Required with a license offer** in the body; the customer purchases a
+license (payment webhook) to top up / convert, or the pilot lapses.
+
+- `POST /metering/customers` - register a pilot customer (admin)
+- `POST /metering/grants` - issue a fixed-pool 6-month pilot grant (admin)
+- `POST /metering/grants/{id}/purchase` - create a purchase token + offer
+- `POST /metering/payments/webhook` - payment confirmation (signed webhook)
+- `POST /metering/api-keys` - create `X-API-Key` bound to a grant (admin)
+- `GET /metering/grants` + `GET /metering/grants/{id}` - grants + balances
+- `GET /metering/usage` - per-grant usage records (ledger-hash-linked)
+- `POST /metering/audit/anchor` - anchor the period commitment (on-chain optional)
+- `GET /metering/audit/commitment` - current period commitment (read-only)
+
+Token lifecycle per call is atomic: `authorize` (reserve) -> analyze -> `settle`;
+any failure releases the reservation so the pilot only pays for completed
+analyses. Usage is recorded in the durable hash-chained ledger (`ledger.db`) and
+mirrored fail-soft to Postgres; when `METERING_USAGE_REGISTRY_ADDRESS` is set,
+each period's SHA-256 commitment is submitted to the Polygon `UsageAudit`
+registry (`contracts/UsageAudit.sol`).
+
+## Universal Integration Surface (C2)
+
+External institutions integrate through the `/v1` metered REST API (API key +
+webhooks) or native protocol adapters:
+
+- `POST /v1/transactions/analyze` - full metered analysis (1 token)
+- `POST /v1/compliance/check` - OFAC/FATF party screening (1 token)
+- `POST /v1/entitlement` - balance / expiry / license offer (0 tokens)
+- `POST /v1/webhooks/register` - subscribe to signed decision delivery
+- `POST /v1/integrations/iso20022/analyze` - `pacs.008` / `pain.001` /
+  `camt.052` / `camt.053` XML in, ISO-style verdict out
+- `POST /v1/integrations/fix/analyze` - FIX 4.4 order message in, `35=8`
+  execution notice out (checksum-validated)
+- `POST /v1/integrations/core-banking/{provider}/analyze` - Mambu, Thought
+  Machine Vault, Temenos T24, Jack Henry Symitar payloads normalized to the
+  universal request, verdicts mapped back to vendor conventions
+
+Webhook delivery is HMAC-SHA256 signed (`X-Protean-Signature: sha256=<hex>`,
+`X-Protean-Event`, `X-Protean-Delivery`, `X-Protean-Timestamp`), retried with
+backoff (3 attempts), and persisted for audit. Verified clients:
+
+- **Python SDK** - `sdk/python/protean_metered/` (`ProteanClient`,
+  `verify_webhook_signature`, `EntitlementExhausted` with the license offer)
+- **Node SDK** - `sdk/node/protean.mjs` (`ProteanClient`,
+  `verifyWebhookSignature`, `verifyWebhookRequest`)
+
+Events also stream to Kafka (`kafka_topic_risk`) when a broker is configured,
+with a SHA-256 payload fingerprint for audit cross-checking.
+
+## Legacy Licensing Migration (demo-era -> metering store)
+
+The demo-era in-memory licensing stack (`app/licensing/`, `app/connectors/usage.py`,
+`TIER_LIMITS`) has been retired in favor of the durable metering ledger. The
+enterprise connector, licensing server, and K8s operator still work unchanged:
+
+- **Signed license files** (`app/licensing/verifier.py`) remain the ECDSA P-256
+  crypto artifact. On issue/renew, `app/metering/migrate.ensure_grant_for_license`
+  mints the matching **fixed-token metering grant**, keyed idempotently by
+  `license_id` (stored in the grant's `purchase_order` column). Pool =
+  `defense.max_protected_txs_per_day` x remaining term.
+- **Enterprise connector** (`/v1/protect`, `/v1/mev/opportunity`) now uses a
+  metered dependency: `X-API-Key` -> metering grant -> feature check -> atomic
+  1-token reservation, settled on success / released on failure. Exhausted or
+  unlicensed keys fail closed with 402 (same `EntitlementError` mapping as `/v1`).
+- **Licensing server** (`/api-keys/*`, `/usage/*`) delegates to the metering
+  store (`pk_live_...` keys, zero-token audit events for usage records).
+- **K8s operator** hourly license check still resolves `LicenseVerifier`
+  (unchanged); the connector now gates on tokens rather than the license file.
+- **In-memory dicts retired**: `licenses_db`/`api_keys_db`/`usage_db` (server),
+  `usage_db`/`usage_counters`/`TIER_LIMITS` (usage.py) removed. Tier limits are
+  replaced by grant token pools.
 
 ## Frontend
 

@@ -6,6 +6,10 @@ import logging
 import sys
 import json
 import re
+import os
+import threading
+from pathlib import Path
+from datetime import datetime, timezone
 from pythonjsonlogger import jsonlogger
 from typing import Dict, Any, Optional
 
@@ -77,6 +81,30 @@ def setup_logging_otel():
     return logger
 
 # Enterprise audit logger for SIEM
+_audit_lock = threading.Lock()
+
+def _audit_jsonl_sink(record: Dict[str, Any], path: Optional[str] = None) -> None:
+    """Durable local append-only audit trail (FedRAMP AU-4/AU-6).
+
+    Survives SIEM outages: every audit event is written to data/audit.jsonl
+    regardless of whether the remote SIEM endpoint is reachable.
+    """
+    from app.core.config import settings
+    sink_path = path or getattr(settings, "audit_log_path", None) or "data/audit.jsonl"
+    if not sink_path:
+        return
+    try:
+        line = json.dumps(record, sort_keys=True, default=str) + "\n"
+        with _audit_lock:
+            p = Path(sink_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "a") as f:
+                f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
+    except Exception as e:
+        logging.getLogger("audit").warning(f"Audit JSONL sink write failed: {e}")
+
 def audit_log(event_type: str, actor: str, action: str, resource: str, result: str, metadata: Dict[str, Any] = None):
     """
     FedRAMP AU-2 audit event
@@ -89,15 +117,22 @@ def audit_log(event_type: str, actor: str, action: str, resource: str, result: s
         "resource": redact_pii(resource),
         "result": result,
         "metadata": metadata or {},
-        "severity": "INFO" if result == "SUCCESS" else "WARNING"
+        "severity": "INFO" if result == "SUCCESS" else "WARNING",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     logger.info(json.dumps(record))
-    
-    # Forward to SIEM if configured
+
+    # Durable local audit trail - never lost to a remote outage.
+    _audit_jsonl_sink(record)
+
+    # Forward to SIEM if configured (best effort, one retry)
     from app.core.config import settings
     if settings.siem_endpoint:
-        try:
-            import httpx
-            httpx.post(settings.siem_endpoint, json=record, timeout=2.0)
-        except Exception:
-            pass  # Don't fail on SIEM failure, but log
+        for attempt in (0, 1):
+            try:
+                import httpx
+                httpx.post(settings.siem_endpoint, json=record, timeout=2.0)
+                break
+            except Exception:
+                if attempt == 1:
+                    pass  # Don't fail on SIEM failure, durable JSONL sink covers it

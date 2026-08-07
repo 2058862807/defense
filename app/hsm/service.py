@@ -11,8 +11,9 @@ Fallback: Software signing via eth_account (for dev) or Vault Transit (for prod 
 """
 
 import logging
-import os
 from typing import Optional
+
+from web3 import Web3
 
 from .base import HSMProvider
 from .aws_cloudhsm import AWSCloudHSM
@@ -22,56 +23,69 @@ from .securosys import SecurosysHSM
 logger = logging.getLogger(__name__)
 
 class HSMSoftwareFallback:
-    """Software fallback - uses eth_account or cryptography for signing"""
+    """Software custody fallback - resolves the real signing key through the
+    custody chokepoint (Vault -> local encrypted store -> dev env) and signs
+    with it. NEVER fabricates signatures."""
+
     def get_provider_name(self) -> str:
-        return "Software Fallback"
+        return "Software Custody (managed store)"
 
     def is_available(self) -> bool:
         return True
 
-    def sign(self, key_id: str, data: bytes) -> bytes:
-        # For enterprise, this would be Vault Transit engine
-        # For dev, use eth_account to sign hash
-        try:
-            # Try to load key from Vault first (software but with audit)
-            from app.core.security import get_secret_from_vault
-            from app.core.config import settings
-            secret = get_secret_from_vault(
-                settings.vault_addr,
-                settings.vault_role_id,
-                settings.vault_secret_id.get_secret_value(),
-                f"secret/data/{key_id}"
-            )
-            priv_key = secret.get("private_key")
-            if priv_key:
-                from eth_account import Account
-                from eth_account.messages import encode_defunct
-                account = Account.from_key(priv_key)
-                msg = encode_defunct(data)
-                signed = account.sign_message(msg)
-                logger.warning(f"HSM FALLBACK to Vault software signing via {key_id} - not FIPS 140-2 Level 3")
-                return signed.signature
-        except Exception as e:
-            logger.debug(f"Vault software fallback failed: {e}")
+    def _resolve_key(self, key_id: str) -> bytes:
+        """Resolve the private key through the custody chokepoint. Fail closed:
+        raise if no key is available - never sign with a fabricated key."""
+        from app.core.config import settings
+        from app.core.secrets_store import resolve_secret
 
-        # Final fallback: eth_account from env (dev only)
-        logger.warning(f"HSM FALLBACK to software signing for {key_id} - dev only, not FIPS 140-2 Level 3")
-        from eth_account import Account
+        secret = resolve_secret(
+            key_id,
+            settings.vault_addr,
+            settings.vault_role_id,
+            settings.vault_secret_id.get_secret_value(),
+        )
+        if secret:
+            priv_key = secret.get("private_key") or secret.get("evm_private_key")
+            if priv_key:
+                if not priv_key.startswith("0x"):
+                    priv_key = "0x" + priv_key
+                return bytes.fromhex(priv_key.removeprefix("0x"))
+
+        # Env key is allowed when not production, or when software custody is
+        # explicitly permitted (hsm_require_hardware=false). Mirrors the custody
+        # chokepoint policy in app/hsm/custody.py - never sign in a hardened
+        # production posture with an env key.
+        if (not settings.is_production() or not settings.hsm_require_hardware) and settings.evm_private_key:
+            return bytes.fromhex(settings.evm_private_key.get_secret_value().removeprefix("0x"))
+
+        raise RuntimeError(
+            "FAIL-CLOSED: software custody fallback has no signing key available"
+        )
+
+    def sign(self, key_id: str, data: bytes) -> bytes:
+        """Sign `data` as an Ethereum signed message using the resolved key.
+        Returns a real 65-byte secp256k1 signature."""
         from eth_account.messages import encode_defunct
-        # Use dev key from env or generate ephemeral (never in prod)
-        dev_key = os.getenv("EVM_PRIVATE_KEY") or "0x" + "1"*64
-        try:
-            account = Account.from_key(dev_key)
-            msg = encode_defunct(data)
-            signed = account.sign_message(msg)
-            return signed.signature
-        except Exception as e:
-            # Last resort: return hash signed via HMAC (not real signature, for testing)
-            import hmac, hashlib
-            return hmac.new(b"dev-fallback-key", data, hashlib.sha256).digest()
+        from eth_keys.datatypes import Signature
+
+        from app.hsm.custody import SoftwareSigningBackend
+
+        priv_key = self._resolve_key(key_id)
+        backend = SoftwareSigningBackend(priv_key)
+        # eth-account 0.13.x: SignableMessage is (version, header, body); the
+        # EIP-191 message hash is keccak(version || header || body).
+        sm = encode_defunct(data)
+        msg_hash = bytes(Web3.keccak(sm.version + sm.header + sm.body))
+        r, s, recid = backend.sign_digest(msg_hash)
+        signature = Signature(vrs=(recid, r, s)).to_bytes()
+        backend.zeroize()
+
+        logger.warning(f"HSM FALLBACK to software custody via {key_id} - not FIPS 140-2 Level 3")
+        return signature
 
     def get_public_key(self, key_id: str) -> bytes:
-        return b"software-fallback-public-key"
+        return b"software-custody-public-key"
 
 class HSMService:
     def __init__(self):
@@ -111,6 +125,15 @@ class HSMService:
 
         if not self.providers:
             logger.warning("No cloud HSM providers configured - will use software fallback (Vault Transit or eth_account)")
+
+    def refresh(self):
+        """Re-initialize providers from current credentials (pilot store / env).
+
+        Called after a credential change so newly entered tokens apply without
+        a restart. Fail-open: a provider init error only drops that provider.
+        """
+        self.providers = []
+        self._init_providers()
 
     def sign(self, key_id: str, data: bytes, use_hsm: bool = True) -> bytes:
         """Sign data - tries cloud HSM first, fallback to software"""

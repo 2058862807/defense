@@ -1,0 +1,18 @@
+# PROTEAN SHAPES - Frontend (production Vite build + Express proxy)
+# Builds the static React app (vite build) and bundles server.ts (esbuild),
+# then serves dist/ and proxies /bot/* and /ws/* to the backend service.
+FROM node:20-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json vite.config.js index.html ./
+COPY src ./src
+RUN npm ci && npm run build
+
+FROM node:20-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/package.json /app/package-lock.json ./
+COPY --from=build /app/dist ./dist
+RUN npm ci --omit=dev
+
+EXPOSE 3000
+CMD ["npm", "start"]

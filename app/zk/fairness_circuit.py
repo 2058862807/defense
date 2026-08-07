@@ -178,7 +178,6 @@ template FairnessPolicyV{self.version.replace('.','_')}() {{
 
     signal sandwichBlocked;
     sandwichBlocked <== isSandwich * (1 - {1 if self.policy.get('allow_sandwich') else 0});
-
     signal smallSandwichBlocked;
     smallSandwichBlocked <== isSandwich * smallUserCheck.out;
 

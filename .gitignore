@@ -6,6 +6,10 @@ circuits/build/
 circuits/*/build/
 **/build/
 node_modules/
+
+# Foundry - installed via `forge install`, not vendored (see docs/DEVELOPER.md)
+lib/
+cache/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -51,3 +55,18 @@ tests/e2e/results.json
 # Coverage
 coverage/
 .nyc_output/
+
+# Runtime data
+/data/
+*.enc
+
+# Runtime secrets + audit data - never commit
+data/secrets.enc
+data/.secrets_master_key
+data/local_secrets.env
+data/secrets.enc
+data/audit.jsonl
+data/ledger.db
+data/ledger.db-*
+data/sanctions_shadow.json
+certs/

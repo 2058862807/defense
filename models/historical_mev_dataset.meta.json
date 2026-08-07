@@ -1,0 +1,19 @@
+{
+  "source": "Polygon mainnet Uniswap V3 Swap events",
+  "pools": [
+    "WMATIC/WETH 3000",
+    "WMATIC/WETH 500",
+    "USDC/WETH 500",
+    "USDC/WETH 3000",
+    "WMATIC/USDC 500",
+    "WMATIC/USDC 3000"
+  ],
+  "blocks": 3000,
+  "from_block": 91374820,
+  "to_block": 91377820,
+  "collected_at": "2026-08-03T15:45:02.833225+00:00",
+  "rows": 917,
+  "positive_rate": 0.0752453653217012,
+  "label_method": "mev_vulnerable = 1 if swap size > 90th pct for its pool OR price impact > 50bps; non-swaps = 0",
+  "dataset_hash": "8775fe30facbb3cca36599d73bac59cf4024f4d77b0b450bdaaa801ae590027a"
+}

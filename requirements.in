@@ -1,0 +1,60 @@
+# PROTEAN SHAPES Enterprise - direct dependencies.
+# Compile with: uv pip compile requirements.in -o requirements.enterprise.txt --generate-hashes --python-version 3.11
+# requirements.enterprise.txt is the generated lock file - do not hand-edit it.
+
+# Web framework - FIPS TLS via cryptography
+fastapi==0.141.1
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+
+# ML - deterministic, no random in prod
+numpy
+scipy
+scikit-learn
+xgboost
+shap
+joblib
+pandas
+numba
+
+# HTTP / async
+aiohttp
+httpx
+certifi
+
+# EVM - real web3
+web3
+eth-account
+eth-abi
+eth-utils
+hexbytes
+pycryptodome
+rlp
+
+# Database - TLS required
+psycopg2-binary
+redis
+
+# Streaming - TLS/SASL
+aiokafka
+
+# Security - FIPS
+PyJWT
+bcrypt
+cryptography==49.0.0
+cffi
+
+# PQC - liboqs-python is installed separately in the Dockerfile (built from
+# a pinned, checksum-verified liboqs commit; not a PyPI package)
+
+# Enterprise infra
+pybreaker
+hvac
+prometheus-client
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp
+opentelemetry-instrumentation-logging
+python-json-logger

@@ -16,6 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: No real signing keys committed
+        run: |
+          chmod +x scripts/check_no_secrets_staged.sh
+          ./scripts/check_no_secrets_staged.sh --tracked
+
       - name: Setup Python 3.11 FIPS
         uses: actions/setup-python@v5
         with:
@@ -29,9 +34,15 @@ jobs:
           circom --version
 
       - name: Build liboqs (FIPS 203)
+        env:
+          LIBOQS_COMMIT: f4b96220e4bd208895172acc4fedb5a191d9f5b1
         run: |
-          git clone --branch 0.12.0 https://github.com/open-quantum-safe/liboqs.git
-          cd liboqs && mkdir build && cd build && cmake -DBUILD_SHARED_LIBS=ON .. && make -j4 && sudo make install && sudo ldconfig
+          git clone https://github.com/open-quantum-safe/liboqs.git
+          cd liboqs && git checkout "$LIBOQS_COMMIT"
+          if [ "$(git rev-parse HEAD)" != "$LIBOQS_COMMIT" ]; then
+            echo "FATAL: liboqs checkout does not match pinned commit $LIBOQS_COMMIT" >&2; exit 1
+          fi
+          mkdir build && cd build && cmake -DBUILD_SHARED_LIBS=ON .. && make -j4 && sudo make install && sudo ldconfig
           cd ../.. && git clone https://github.com/open-quantum-safe/liboqs-python.git && cd liboqs-python && pip install .
 
       - name: Compile circuits
@@ -45,11 +56,11 @@ jobs:
           # sha256sum build/* > build/circuit.hash
           # cat build/circuit.hash
 
-      - name: pip-compile with hashes
+      - name: verify requirements.enterprise.txt matches requirements.in
         run: |
-          pip install pip-tools
-          pip-compile --generate-hashes requirements.enterprise.txt -o requirements.enterprise.lock || true
-          cat requirements.enterprise.lock
+          pip install uv
+          uv pip compile requirements.in -o /tmp/requirements.enterprise.txt.check --generate-hashes --python-version 3.11
+          diff requirements.enterprise.txt /tmp/requirements.enterprise.txt.check
 
       - name: pip-audit strict
         run: |
@@ -75,9 +86,11 @@ jobs:
         env:
           ENV: dev
           JWT_JWKS_URL: https://auth.dev.protean.sh/.well-known/jwks.json
-          ZK_PROVER_URL: http://localhost:5000/prove
-          ZK_VERIFIER_URL: http://localhost:5000/verify
-          ZK_CIRCUIT_HASH: dev_test_hash
+          # Proving/verification are in-process (CircuitIngestor/snarkjs).
+          ZK_CIRCUIT_PATH_WASM: circuits/final_artifacts/fairness_policy.wasm
+          ZK_CIRCUIT_PATH_ZKEY: circuits/final_artifacts/fairness_policy_final.zkey
+          ZK_VERIFICATION_KEY_PATH: circuits/final_artifacts/verification_key.json
+          ZK_CIRCUIT_HASH: d80e39879037cddf0694ee59d1b6d21d1a9fa386196564732a19245363100b41
           EVM_RPC_URL: https://mainnet.infura.io/v3/test
           EVM_WS_URL: wss://mainnet.infura.io/ws/v3/test
           VAULT_ADDR: https://vault.dev.protean.sh
@@ -92,7 +105,7 @@ jobs:
         uses: sigstore/cosign-installer@v3
       - run: |
           cosign sign-blob --yes sbom.json --output-signature sbom.sig
-          cosign sign-blob --yes circuits/build/verification_key.json --output-signature circuit.sig || true
+          cosign sign-blob --yes circuits/build/verification_key.json --output-signature circuit.sig
 
       - name: Build enterprise Docker (distroless)
         run: |

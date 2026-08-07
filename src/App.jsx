@@ -17,16 +17,16 @@ import BiometricsSuite from './components/BiometricsSuite';
 import FederatedLearning from './components/FederatedLearning';
 import GnnFraudRings from './components/GnnFraudRings';
 import QrngEntropy from './components/QrngEntropy';
-import ToolDemoStudio from './components/ToolDemoStudio';
 import WebMasterAgentPanel from './components/WebMasterAgentPanel';
 import ZkXaiCouplingView from './components/ZkXaiCouplingView';
 import SandwichDetector from './components/SandwichDetector';
+import BotOpsView from './components/BotOpsView';
 
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'DASHBOARD', icon: '◈' },
+  { id: 'bots', label: 'BOT OPS', icon: '⚔' },
   { id: 'zkxai', label: 'ZK XAI COUPLING', icon: '🔑' },
   { id: 'sandwich', label: 'SANDWICH DETECT', icon: '🥪' },
-  { id: 'demostudio', label: 'DEMO STUDIO', icon: '🧪' },
   { id: 'biometrics', label: 'BIOMETRICS', icon: '🧬' },
   { id: 'federated', label: 'FEDERATED', icon: '⚡' },
   { id: 'gnn', label: 'GNN RINGS', icon: '🕸' },
@@ -438,15 +438,15 @@ function NeuralView({ data }) {
             <strong>No real SHAP values yet:</strong> Neural network shows 0.000 because no real transactions from mempool. To get real data:<br/>
             1. Start Python backend: <code>uvicorn app.main:app --port 8080</code> with real model at models/xgboost_protean_v2.joblib<br/>
             2. Configure EVM_WS_URL with Alchemy/Infura API key from Vault for real mempool<br/>
-            3. Or trigger real analysis: <code>curl -X POST http://localhost:8080/analyze -H "Authorization: Bearer $JWT" -d '{'{'"type":"swap","value_eth":0.5,"gas_price_gwei":50,"slippage_bps":100,"pool_liquidity_eth":1000,"is_protected_user":1}'}'</code><br/>
-            4. Real flow: mempool -> scoring xgboost_protean_v2 -> SHAP TreeExplainer -> ZK proof WASM+ZKEY -> verification<br/>
+            3. Or trigger real analysis: <code>{"curl -X POST http://localhost:8080/analyze -H \"Authorization: Bearer $JWT\" -d '{\"type\":\"swap\",\"value_eth\":0.5,\"gas_price_gwei\":50,\"slippage_bps\":100,\"pool_liquidity_eth\":1000,\"is_protected_user\":1}'"}</code><br/>
+            4. Real flow: mempool -&gt; scoring xgboost_protean_v2 -&gt; SHAP TreeExplainer -&gt; ZK proof WASM+ZKEY -&gt; verification<br/>
             Current mode: {data?.transactions?.length > 0 ? `${data.transactions.length} transactions in buffer, but shapValues empty - check backend /analyze endpoint` : "No transactions - backend not connected or mempool empty"}
           </div>
         )}
         {Object.keys(shapValues).length > 0 && (
           <div style={{ fontSize: '11px', color: '#00ff88', marginTop: '12px', padding: '12px', background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.2)', borderRadius: '6px' }}>
             <strong>Real SHAP from xgboost_protean_v2.joblib:</strong> {Object.entries(shapValues).slice(0,5).map(([k,v]) => `${k}: ${typeof v === 'number' ? v.toFixed(3) : v}`).join(', ')}...<br/>
-            Risk Score: {riskScore} from real model commitment {data?.metrics?.model_hash?.substring(0,16) || '9d271370...'} - FIPS 140-3 self-assessed
+            Risk Score: {riskScore} from real model commitment {data?.metrics?.model_hash?.substring(0,16) || '9843c560d965d7c0...'} - FIPS 140-3 self-assessed
           </div>
         )}
       </div>
@@ -465,10 +465,12 @@ function NeuralView({ data }) {
 
 function QuantumView({ data }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
-      <div style={styles.panelCard}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, minHeight: 0 }}>
+      <div style={{ ...styles.panelCard, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={styles.panelTitle}>⟁ Quantum Key Network (PQC KMS)</div>
-        <QknVisualization metrics={data?.metrics || {}} />
+        <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+          <QknVisualization metrics={data?.metrics || {}} />
+        </div>
       </div>
     </div>
   );
@@ -566,9 +568,9 @@ export default function App() {
     const viewProps = { data: liveData, isLive };
     switch (activeView) {
       case 'dashboard': return <ProteanDefaultView {...viewProps} />;
+      case 'bots': return <BotOpsView {...viewProps} />;
       case 'zkxai': return <ZkXaiCouplingView {...viewProps} />;
       case 'sandwich': return <SandwichView {...viewProps} />;
-      case 'demostudio': return <ToolDemoStudio />;
       case 'biometrics': return <BiometricsSuite />;
       case 'federated': return <FederatedLearning />;
       case 'gnn': return <GnnFraudRings />;
@@ -595,10 +597,9 @@ export default function App() {
         {NAV_ITEMS.map(item => (
           <div
             key={item.id}
-            className={item.id === 'demostudio' ? `demo-studio-sidebar-btn ${activeView === 'demostudio' ? 'active' : ''}` : ''}
             style={styles.navItem(activeView === item.id)}
             onClick={() => setActiveView(item.id)}
-            title={`${item.label}${item.id === 'demostudio' ? ' (INTERACTIVE DEMO STUDIO)' : ''}`}
+            title={item.label}
           >
             {item.icon}
           </div>
@@ -613,67 +614,21 @@ export default function App() {
             <div style={styles.headerTitle} onClick={() => setActiveView('dashboard')}>
               PROTEAN DEFENSE
             </div>
-
-            {/* Standout Featured Demo Studio Button */}
-            <button
-              onClick={() => setActiveView('demostudio')}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 14px',
-                borderRadius: '20px',
-                border: activeView === 'demostudio' ? '2px solid #ffffff' : '1.5px solid #00f0ff',
-                background: activeView === 'demostudio'
-                  ? 'linear-gradient(135deg, #a855f7 0%, #ec4899 50%, #00f0ff 100%)'
-                  : 'linear-gradient(135deg, rgba(168, 85, 247, 0.9) 0%, rgba(236, 72, 153, 0.9) 50%, rgba(0, 240, 255, 0.9) 100%)',
-                color: '#ffffff',
-                fontWeight: 800,
-                fontSize: '11px',
-                fontFamily: 'var(--font-mono, monospace)',
-                cursor: 'pointer',
-                boxShadow: activeView === 'demostudio'
-                  ? '0 0 25px rgba(0, 240, 255, 0.9), 0 0 40px rgba(236, 72, 153, 0.9)'
-                  : '0 0 16px rgba(0, 240, 255, 0.6), 0 0 28px rgba(168, 85, 247, 0.5)',
-                animation: 'demoStudioGlow 2.5s infinite ease-in-out',
-                whiteSpace: 'nowrap',
-                letterSpacing: '0.5px',
-              }}
-            >
-              <span style={{ fontSize: '14px' }}>🧪</span>
-              <span>DEMO STUDIO</span>
-              <span style={{
-                background: '#00f0ff',
-                color: '#05101a',
-                fontSize: '9px',
-                fontWeight: 900,
-                padding: '1px 5px',
-                borderRadius: '6px',
-                letterSpacing: '0.5px',
-                boxShadow: '0 0 6px #00f0ff',
-              }}>
-                INTERACTIVE
-              </span>
-            </button>
           </div>
 
           {/* Top Middle Tab Navigation */}
           <div style={styles.topNavContainer}>
-            {NAV_ITEMS.map((item) => {
-              const isDemo = item.id === 'demostudio';
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveView(item.id)}
-                  className={isDemo ? `demo-studio-tab-btn ${activeView === 'demostudio' ? 'active' : ''}` : ''}
-                  style={isDemo ? undefined : styles.topNavBtn(activeView === item.id, false)}
-                  title={item.label}
-                >
-                  <span>{item.icon}</span>
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
+            {NAV_ITEMS.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setActiveView(item.id)}
+                style={styles.topNavBtn(activeView === item.id, false)}
+                title={item.label}
+              >
+                <span>{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>

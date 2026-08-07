@@ -208,7 +208,7 @@ kubectl get deployment offense-bot -n protean-prod -o yaml | grep replicas
 
 ### Circuits
 
-- `circuit-config` ConfigMap contains `CIRCUIT_HASH` `db9cf5c7...` SLSA L3
+- `circuit-config` ConfigMap contains `CIRCUIT_HASH` `d80e3987...` SLSA L3
 - WASM + ZKEY stored in `circuits/build/` + S3 with cosign, Rekor transparency
 - Powers of Tau ceremony transcript in `circuits/ceremony/transcript/`
 

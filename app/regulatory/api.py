@@ -6,51 +6,16 @@ Government Standard: FIPS 140-3, SLSA L3, live feeds from treasury.gov + fatf-ga
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
+from datetime import datetime
 import logging
+import json
 
+from app.core.auth_deps import get_current_user, require_role
 from app.core.config import settings
 from app.zk.verifier import ZKVerifier
 
 router = APIRouter(prefix="/regulatory", tags=["regulatory"])
 logger = logging.getLogger(__name__)
-
-# JWT verification - enterprise gov standard
-try:
-    from app.core.security import verify_jwt_gov
-    def get_current_user(authorization: str = Header(...)):
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(401, "Invalid auth header")
-        token = authorization.split(" ", 1)[1]
-        try:
-            # Use gov standard verification with JWKS
-            from app.core.config import settings as cfg
-            payload = verify_jwt_gov(
-                token,
-                jwks_url=cfg.jwt_jwks_url,
-                audience=cfg.jwt_aud,
-                issuer=cfg.jwt_issuer,
-                algorithms=[cfg.jwt_algorithm]
-            )
-            return payload
-        except Exception as e:
-            # Fallback for dev mode with old config
-            try:
-                from app.core.security import verify_jwt
-                payload = verify_jwt(token, settings.jwt_secret.get_secret_value() if hasattr(settings, 'jwt_secret') else "dev", settings.jwt_aud, [settings.jwt_algorithm] if hasattr(settings, 'jwt_algorithm') else ["HS256"])
-                return payload
-            except:
-                raise HTTPException(401, f"JWT verification failed: {e}")
-except ImportError:
-    from app.core.security import verify_jwt
-    def get_current_user(authorization: str = Header(...)):
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(401, "Invalid auth header")
-        token = authorization.split(" ", 1)[1]
-        try:
-            payload = verify_jwt(token, settings.jwt_secret.get_secret_value() if hasattr(settings, 'jwt_secret') else "dev", settings.jwt_aud, [settings.jwt_algorithm] if hasattr(settings, 'jwt_algorithm') else ["HS256"])
-            return payload
-        except Exception as e:
-            raise HTTPException(401, f"JWT verification failed: {e}")
 
 class FeedbackRequest(BaseModel):
     encrypted: bool
@@ -65,6 +30,30 @@ class ComplianceCheckRequest(BaseModel):
     address: Optional[str] = None
     name: Optional[str] = None
     country: Optional[str] = None
+
+class ScreenRequest(BaseModel):
+    address: str
+    amount: Optional[float] = None
+    jurisdiction: Optional[str] = None
+    currency: Optional[str] = None
+    counterparty: Optional[str] = None
+
+class ScreenResponse(BaseModel):
+    screened_address: str
+    amount: Optional[float] = None
+    jurisdiction: Optional[str] = None
+    currency: Optional[str] = None
+    counterparty: Optional[str] = None
+    shadow_match: Optional[Dict[str, Any]] = None
+    ofac_address_match: Optional[Dict[str, Any]] = None
+    jurisdiction_risk: Optional[Dict[str, Any]] = None
+    currency_flag: Optional[Dict[str, Any]] = None
+    analytics: Optional[list] = None
+    risk_score: float
+    decision: str
+    reasons: list
+    sources: list
+    checked_at: str
 
 class ComplianceCheckResponse(BaseModel):
     checked_at: str
@@ -85,12 +74,9 @@ async def submit_feedback(req: FeedbackRequest, user=Depends(get_current_user)):
     """
     data = req.data
     if req.encrypted:
-        from app.federated.crypto import decrypt_federated_payload
-        try:
-            decrypted = decrypt_federated_payload(data) if "kem_ct" in data else data
-            payload = decrypted if isinstance(decrypted, dict) else data
-        except Exception as e:
-            logger.error(f"Failed to decrypt regulatory payload: {e}")
+        from app.regulatory.keys import decrypt_regulatory_payload
+        payload = decrypt_regulatory_payload(data)
+        if payload is None:
             raise HTTPException(400, "Decryption failed")
     else:
         payload = data
@@ -107,10 +93,52 @@ async def submit_feedback(req: FeedbackRequest, user=Depends(get_current_user)):
 
     logger.info(f"Regulatory feedback: user={user.get('sub')} verified={valid} fair={fairness.get('is_fair')} risk={risk}")
 
+    # Durable store (FedRAMP AU-3/AU-4): append every feedback record regardless
+    # of whether Postgres is reachable. Plaintext-only; the payload was already
+    # decrypted at rest, and the file is on the protected volume.
+    try:
+        from pathlib import Path
+        record = {
+            "received_at": datetime.utcnow().isoformat(),
+            "actor": user.get("sub"),
+            "verified": valid,
+            "fair": fairness.get("is_fair"),
+            "risk_score": risk,
+            "tx_hash": payload.get("tx_hash"),
+            "onchain_hash": payload.get("onchain_hash"),
+            "policy_version": payload.get("policy_version"),
+            "model_hash": payload.get("model_hash"),
+        }
+        store_path = settings.regulatory_feedback_store_path
+        Path(store_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(store_path, "a") as f:
+            f.write(json.dumps(record, sort_keys=True) + "\n")
+    except Exception as e:
+        logger.error(f"Regulatory feedback store write failed: {e}")
+
     if settings.postgres_url:
         pass
 
     return FeedbackResponse(status="logged", verified=valid, risk_score=risk)
+
+@router.get("/pqc/pubkey")
+async def get_regulatory_pqc_pubkey(user=Depends(get_current_user)):
+    """Serve the regulatory API's persistent ML-KEM public key so the defense
+    bot can PQC-encrypt feedback to a key we actually hold the secret for.
+    mTLS (transport) + JWT (identity) gated. Fail-closed: no key, no response.
+    """
+    from app.regulatory.keys import load_or_create_regulatory_keypair
+    pair = load_or_create_regulatory_keypair()
+    if not pair:
+        raise HTTPException(500, "Regulatory PQC key unavailable (set SECRETS_MASTER_KEY)")
+    pub, _, variant = pair
+    import base64
+    return {
+        "public_key": base64.b64encode(pub).decode(),
+        "variant": variant,
+        "kem_alg": variant,
+        "dem_alg": "AES-256-GCM",
+    }
 
 @router.get("/policy")
 async def get_fairness_policy(user=Depends(get_current_user)):
@@ -166,19 +194,10 @@ async def combined_stats(user=Depends(get_current_user)):
         raise HTTPException(500, f"Compliance stats failed: {e}")
 
 @router.post("/compliance/refresh")
-async def refresh_feeds(user=Depends(get_current_user)):
+async def refresh_feeds(user=Depends(require_role("gov-admin", "operator"))):
     """
-    Force refresh OFAC and FATF feeds - used by CronJob and admin
-    Requires admin role (check JWT claims)
+    Force refresh OFAC and FATF feeds - requires gov-admin or operator.
     """
-    # Check admin claim
-    roles = user.get("roles", []) or user.get("permissions", [])
-    if "admin" not in roles and "compliance_admin" not in roles:
-        # For gov, would check via OPA, but simple check here
-        logger.warning(f"Non-admin attempted compliance refresh: {user.get('sub')} roles={roles}")
-        # Allow but log for now, in prod would require admin
-        pass
-
     try:
         from app.compliance.service import compliance_service
         result = compliance_service.refresh_all()
@@ -196,6 +215,28 @@ async def ofac_search(q: str = Query(..., description="Name to search in OFAC SD
         return result
     except Exception as e:
         raise HTTPException(500, f"OFAC search failed: {e}")
+
+@router.post("/compliance/screen", response_model=ScreenResponse)
+async def compliance_screen(req: ScreenRequest, user=Depends(require_role("gov-admin", "operator"))):
+    """Address-risk screen for a transaction: shadow set + OFAC SDN digital
+    currency addresses + FATF jurisdiction + currency flags + Chainalysis/TRM
+    analytics stubs. Returns allow / review / block. gov-admin or operator only.
+    """
+    from app.compliance.address_risk import address_risk_engine
+    result = address_risk_engine.screen_transaction(
+        address=req.address,
+        amount=req.amount,
+        jurisdiction=req.jurisdiction,
+        currency=req.currency,
+        counterparty=req.counterparty,
+    )
+    if result.get("error"):
+        raise HTTPException(400, result["error"])
+    logger.info(
+        f"Address screen by {user.get('sub')} address={req.address} "
+        f"decision={result.get('decision')} score={result.get('risk_score')}"
+    )
+    return result
 
 @router.get("/compliance/fatf/check")
 async def fatf_check(country: str = Query(..., description="Country to check against FATF grey/black list"), user=Depends(get_current_user)):

@@ -23,7 +23,34 @@ FATF_FEEDS = {
     "fatf_api_grey": "https://www.fatf-gafi.org/en/publications/High-risk-and-other-monitored-jurisdictions/Increased-monitoring.html",
     # Alternative: FATF maintains JSON or structured data via their site search
     "fatf_publications_api": "https://www.fatf-gafi.org/en/publications.html",
+    # Full lists live on the per-plenary pages (Jun/Feb/Oct).
+    "grey_list_june_2026": "https://www.fatf-gafi.org/en/publications/High-risk-and-other-monitored-jurisdictions/increased-monitoring-june-2026.html",
+    "black_list_june_2026": "https://www.fatf-gafi.org/en/publications/High-risk-and-other-monitored-jurisdictions/call-for-action-june-2026.html",
 }
+
+# Mirror tiers. FATF blocks datacenter IPs (403 behind a JS/cookie wall), so we
+# fetch the same publications through neutral mirrors. Order = preference.
+#   - Wayback Machine (web.archive.org) serves the full archived page content.
+#   - r.jina.ai is a text-extraction reader (same-policy proxy).
+# Mirrors only ever reuse the *official* FATF publication URLs.
+FATF_MIRRORS = {
+    "wayback": "https://web.archive.org/web/2026/{url}",
+    "jina": "https://r.jina.ai/{url}",
+}
+# FedRAMP AU-2: only these official FATF hosts are ever used as sources.
+_FATF_SOURCE_HOSTS = ("fatf-gafi.org",)
+
+def _normalize_country_text(text: str) -> str:
+    """Lowercase-safe normalizer: strip common diacritics and collapse whitespace
+    so FATF's own spellings (e.g. Côte d'Ivoire) match canonical names."""
+    t = text
+    for src, dst in (
+        ("é", "e"), ("è", "e"), ("ê", "e"), ("ë", "e"),
+        ("ô", "o"), ("ö", "o"), ("û", "u"), ("ü", "u"),
+        ("ç", "c"), ("â", "a"), ("à", "a"),
+    ):
+        t = t.replace(src, dst)
+    return re.sub(r"\s+", " ", t).strip()
 
 # Known FATF lists as of 2026 (for fallback and validation) - per search results, updated Jun 2026
 FATF_KNOWN_GREY_2026 = [
@@ -37,11 +64,23 @@ FATF_KNOWN_BLACK_2026 = [
     "Iran", "Myanmar", "North Korea"
 ]
 
+# FATF spells some names differently than our canonical list.
+# Canonical -> aliases the FATF site uses (normalized without diacritics).
+FATF_NAME_ALIASES = {
+    "Laos": ["Lao PDR", "Lao People's Democratic Republic"],
+    "Democratic Republic of Congo": ["Democratic Republic of the Congo", "Congo (Democratic Republic)", "Congo"],
+    "Cote d'Ivoire": ["Cote d'Ivoire"],
+    "Virgin Islands (UK)": ["British Virgin Islands", "Virgin Islands (British)", "Virgin Islands"],
+    "North Korea": ["Democratic People's Republic of Korea", "DPRK", "North Korea"],
+}
+
 class FATFFeed:
     def __init__(self, cache=None):
         from .cache import compliance_cache
         self.cache = cache or compliance_cache
         self.last_fetch = None
+        self.last_source = None
+        self.last_feed_url = None
         self.cached_grey_list: List[str] = []
         self.cached_black_list: List[str] = []
 
@@ -64,6 +103,32 @@ class FATFFeed:
             logger.error(f"FATF fetch failed for {url}: {e}")
             raise
 
+    def _fetch_with_mirrors(self, url: str) -> tuple:
+        """Fetch an official FATF publication URL through direct + mirror tiers.
+
+        Returns (html, source) where source is a short string describing which
+        tier served the content, e.g. "fatf-gafi.org" or "mirror:wayback".
+        Only official FATF URLs are ever wrapped by a mirror.
+        """
+        sources = ["direct"] + list(FATF_MIRRORS.keys())
+        last_error = None
+        for tier in sources:
+            target = url
+            if tier == "direct":
+                pass
+            else:
+                target = FATF_MIRRORS[tier].format(url=url)
+            try:
+                html = self._fetch_with_headers(target)
+                if html and len(html.strip()) > 500:
+                    return html, (tier if tier != "direct" else "fatf-gafi.org")
+                last_error = f"empty payload from {tier}"
+            except Exception as e:
+                last_error = f"{tier}: {e}"
+                logger.warning(f"FATF mirror tier {tier} failed for {url}: {e}")
+                continue
+        raise RuntimeError(f"All FATF fetch tiers failed for {url}: {last_error}")
+
     def _parse_grey_list_from_html(self, html: str) -> List[str]:
         """Parse grey list countries from FATF HTML - enterprise scraper"""
         # FATF page contains list of jurisdictions under increased monitoring
@@ -72,12 +137,18 @@ class FATFFeed:
         # Look for patterns like: <li>Angola</li> or <strong>Angola</strong> in grey list section
         # Simplified: extract country names from known list that appear in HTML
         countries = []
+        norm_html = _normalize_country_text(html)
         
-        # Method 1: Search for known grey list countries in HTML
+        # Method 1: Search for known grey list countries in HTML (with aliases)
         for country in FATF_KNOWN_GREY_2026:
-            # Check if country appears in HTML (case insensitive)
-            if re.search(r'\b' + re.escape(country) + r'\b', html, re.IGNORECASE):
+            if re.search(r'\b' + re.escape(country) + r'\b', norm_html, re.IGNORECASE):
                 countries.append(country)
+                continue
+            # Try the alias spellings FATF uses on its own site.
+            for alias in FATF_NAME_ALIASES.get(country, []):
+                if re.search(r'\b' + re.escape(alias) + r'\b', norm_html, re.IGNORECASE):
+                    countries.append(country)
+                    break
         
         # Method 2: If no countries found via known list, try to extract from HTML list structure
         if not countries:
@@ -103,25 +174,33 @@ class FATFFeed:
     def _parse_black_list_from_html(self, html: str) -> List[str]:
         """Parse black list (High-Risk Jurisdictions)"""
         countries = []
+        norm_html = _normalize_country_text(html)
         for country in FATF_KNOWN_BLACK_2026:
-            if re.search(r'\b' + re.escape(country) + r'\b', html, re.IGNORECASE):
+            if re.search(r'\b' + re.escape(country) + r'\b', norm_html, re.IGNORECASE):
                 countries.append(country)
+                continue
+            for alias in FATF_NAME_ALIASES.get(country, []):
+                if re.search(r'\b' + re.escape(alias) + r'\b', norm_html, re.IGNORECASE):
+                    countries.append(country)
+                    break
         return countries
 
     def fetch_grey_list(self) -> List[str]:
-        """Fetch live grey list from FATF"""
+        """Fetch live grey list from FATF through direct + mirror tiers."""
         last_error = None
-        for feed_key in ["grey_list_page", "fatf_api_grey"]:
+        for feed_key in ["grey_list_june_2026", "grey_list_page", "fatf_api_grey"]:
             url = FATF_FEEDS[feed_key]
             try:
-                html = self._fetch_with_headers(url)
+                html, source = self._fetch_with_mirrors(url)
                 countries = self._parse_grey_list_from_html(html)
                 if countries:
-                    logger.info(f"FATF grey list fetched: {len(countries)} countries from {url}")
+                    logger.info(f"FATF grey list fetched: {len(countries)} countries via {source} from {url}")
                     self.last_fetch = datetime.utcnow()
+                    self.last_source = source
+                    self.last_feed_url = url
                     return countries
                 else:
-                    logger.warning(f"FATF grey list parsing returned empty from {url}, trying next")
+                    logger.warning(f"FATF grey list parsing returned empty via {source} from {url}, trying next")
                     continue
             except Exception as e:
                 last_error = e
@@ -132,17 +211,26 @@ class FATFFeed:
         raise RuntimeError(f"All FATF grey list feeds failed: {last_error}")
 
     def fetch_black_list(self) -> List[str]:
-        """Fetch black list (High-Risk Jurisdictions Subject to Call for Action)"""
-        try:
-            url = FATF_FEEDS["black_list_page"]
-            html = self._fetch_with_headers(url)
-            countries = self._parse_black_list_from_html(html)
-            if countries:
-                return countries
-            return FATF_KNOWN_BLACK_2026  # Fallback to known if parsing fails
-        except Exception as e:
-            logger.warning(f"FATF black list fetch failed: {e}, using known list")
-            return FATF_KNOWN_BLACK_2026
+        """Fetch black list (High-Risk Jurisdictions Subject to Call for Action)."""
+        last_error = None
+        for feed_key in ["black_list_june_2026", "black_list_page"]:
+            url = FATF_FEEDS[feed_key]
+            try:
+                html, source = self._fetch_with_mirrors(url)
+                countries = self._parse_black_list_from_html(html)
+                if countries:
+                    logger.info(f"FATF black list fetched: {len(countries)} countries via {source} from {url}")
+                    self.last_fetch = datetime.utcnow()
+                    self.last_source = source
+                    self.last_feed_url = url
+                    return countries
+                logger.warning(f"FATF black list parsing returned empty via {source} from {url}, trying next")
+            except Exception as e:
+                last_error = e
+                logger.warning(f"FATF black list feed {feed_key} failed: {e}")
+                continue
+        logger.warning(f"FATF black list live fetch failed: {last_error}, using known list")
+        return FATF_KNOWN_BLACK_2026
 
     def get_grey_list(self, force_refresh: bool = False) -> List[str]:
         """Get grey list with caching 24h TTL + fallback"""
@@ -214,7 +302,8 @@ class FATFFeed:
                     "requires_edd": True,
                     "requires_countermeasures": True if black_country in ["Iran", "North Korea"] else False,
                     "checked_at": datetime.utcnow().isoformat(),
-                    "source": "live" if self.last_fetch else "cached"
+                    "source": "live" if self.last_fetch else "cached",
+                    "data_source": self.last_source or ("cached" if not self.last_fetch else "unknown"),
                 }
         
         # Check grey list
@@ -228,13 +317,15 @@ class FATFFeed:
                     "requires_edd": False,  # FATF says grey list alone does not require EDD, but input to risk assessment
                     "requires_countermeasures": False,
                     "checked_at": datetime.utcnow().isoformat(),
-                    "source": "live" if self.last_fetch else "cached"
+                    "source": "live" if self.last_fetch else "cached",
+                    "data_source": self.last_source or ("cached" if not self.last_fetch else "unknown"),
                 }
         
         return {
             "high_risk": False,
             "checked_at": datetime.utcnow().isoformat(),
             "source": "live" if self.last_fetch else "cached",
+            "data_source": self.last_source or ("cached" if not self.last_fetch else "unknown"),
             "grey_count": len(grey),
             "black_count": len(black)
         }
@@ -249,8 +340,15 @@ class FATFFeed:
             "black_list": black,
             "last_fetch": self.last_fetch.isoformat() if self.last_fetch else None,
             "source": "fatf-gafi.org live feed",
+            "data_provenance": {
+                "source": self.last_source or "hardcoded-fallback",
+                "feed_url": self.last_feed_url,
+                "fresh": self.last_fetch is not None,
+                "via_mirror": bool(self.last_source and self.last_source != "fatf-gafi.org"),
+            },
             "cache_ttl": 86400,
             "feeds": list(FATF_FEEDS.keys()),
+            "mirrors": list(FATF_MIRRORS.keys()),
             "update_frequency": "3x per year (Feb, Jun, Oct per FATF plenary)"
         }
 

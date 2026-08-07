@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: no-secrets-staged
+        name: Block real EVM/Flashbots keys from being committed
+        entry: scripts/check_no_secrets_staged.sh
+        language: script
+        pass_filenames: false
+        always_run: true

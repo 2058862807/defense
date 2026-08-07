@@ -97,14 +97,17 @@ AAVE_V3_POOL_ABI_FLASHLOAN = [
     },
     {
         "inputs": [
+            {"internalType": "address", "name": "receiverAddress", "type": "address"},
             {"internalType": "address", "name": "asset", "type": "address"},
             {"internalType": "uint256", "name": "amount", "type": "uint256"},
-            {"internalType": "uint256", "name": "premium", "type": "uint256"},
-            {"internalType": "address", "name": "initiator", "type": "address"},
-            {"internalType": "bytes", "name": "params", "type": "bytes"}
+            {"internalType": "bytes", "name": "params", "type": "bytes"},
+            {"internalType": "uint16", "name": "referralCode", "type": "uint16"}
         ],
         "name": "flashLoanSimple",
-        "outputs": [],
+        "outputs": [
+            {"internalType": "address", "name": "", "type": "address"},
+            {"internalType": "uint256", "name": "", "type": "uint256"}
+        ],
         "stateMutability": "nonpayable",
         "type": "function"
     }
@@ -131,8 +134,10 @@ class TxBuilderEnterprise:
         self.w3 = self.evm.w3_http
 
         # Real router addresses mainnet - gov allowlist
-        self.uniswap_v3_router = Web3.to_checksum_address("0xE592427A0AEce92De3Edee1F18E0157C05861564")  # SwapRouter
-        self.aave_v3_pool = Web3.to_checksum_address("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2")
+        self.uniswap_v3_router = Web3.to_checksum_address("0xE592427A0AEce92De3Edee1F18E0157C05861564")  # SwapRouter (Ethereum + Polygon)
+        from app.core.config import settings
+        self.aave_v3_pool = Web3.to_checksum_address(settings.aave_v3_pool_address)
+        self.flash_loan_receiver = Web3.to_checksum_address(settings.flash_loan_receiver_address)
 
     def _get_eip1559_fees(self) -> Tuple[int, int]:
         """Get real EIP-1559 fees via eth_feeHistory - no mock"""
@@ -181,7 +186,7 @@ class TxBuilderEnterprise:
         if not self.evm.account:
             raise ValueError("No signer for transaction signing")
         signed = self.evm.account.sign_transaction(tx)
-        return signed.rawTransaction.hex()
+        return signed.raw_transaction.hex()
 
     def build_uniswap_v3_exact_input_single(self, 
                                             token_in: str, 
@@ -411,39 +416,19 @@ class TxBuilderEnterprise:
 
     def build_aave_flashloan_simple(self, asset: str, amount: int, params: bytes = b"") -> Dict[str, Any]:
         """
-        Build real Aave V3 flashLoanSimple transaction - flash loan without collateral
-        - Borrows asset amount in same transaction
-        - Must be repaid with premium (0.05% = 5 bps) in same tx via executeOperation callback
-        - Real market maker math: premium = amount * 5 / 10000
-        - Used for flash loan arbitrage: borrow, swap, repay + premium, keep profit
+        Build real Aave V3 flashLoanSimple transaction - flash loan without collateral.
+        Aave V3 signature: flashLoanSimple(receiverAddress, asset, amount, params, referralCode).
+        The receiverAddress is the deployed FlashLoanReceiver contract that implements
+        executeOperation (an EOA cannot receive the callback). Premium is computed by
+        the pool (5 bps on V3) and repaid inside executeOperation.
         """
         asset = Web3.to_checksum_address(asset)
 
-        # Flash loan premium 5 bps = 0.05% per Aave V3
-        premium_bps = 5
-        premium = (amount * premium_bps) // 10000
-
-        # For flashLoanSimple: asset, amount, premium, initiator, params
-        # The contract calling flashLoan must implement IFlashLoanSimpleReceiver with executeOperation
-        # executeOperation will contain arbitrage logic: swap borrowed funds, profit, approve Pool to pull amount+premium
-
-        # Build params that contain arbitrage instructions for callback
-        # params could be encoded arbitrage data: pool_a, pool_b, profit, etc.
-        if not params:
-            # Default empty params for simple flash loan
-            params = b""
-
-        # Contract that will receive flash loan and execute arbitrage must be deployed
-        # For this builder, we assume caller is the receiver contract or EOA that has FlashLoanReceiver logic
-        # Real implementation: deploy FlashLoanReceiver contract that does arbitrage in executeOperation
-
         contract = self.w3.eth.contract(address=self.aave_v3_pool, abi=AAVE_V3_POOL_ABI_FLASHLOAN)
 
-        # flashLoanSimple(asset, amount, premium, initiator, params)
-        # initiator is this bot address
         calldata = contract.encodeABI(
             fn_name="flashLoanSimple",
-            args=[asset, amount, premium, self.evm.account.address, params]
+            args=[self.flash_loan_receiver, asset, amount, params, 0]
         )
 
         tx = self._build_transaction_base(to=self.aave_v3_pool, data=calldata, value=0)
@@ -458,12 +443,12 @@ class TxBuilderEnterprise:
             metadata={
                 "asset": asset,
                 "amount": str(amount),
-                "premium": str(premium),
-                "premium_bps": premium_bps
+                "receiver": self.flash_loan_receiver,
+                "premium_bps": 5
             }
         )
 
-        logger.info(f"Flash loan simple built: asset={asset} amount={amount/1e18 if asset.lower() in ['0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'] else amount} premium={premium} 0.05%")
+        logger.info(f"Flash loan simple built: asset={asset} amount={amount} receiver={self.flash_loan_receiver}")
 
         return {
             "signed_transaction": signed_hex,
@@ -472,90 +457,57 @@ class TxBuilderEnterprise:
             "type": "aave_flashloan_simple",
             "asset": asset,
             "amount": amount,
-            "premium": premium,
-            "premium_bps": premium_bps
+            "premium_bps": 5
         }
 
     def build_flashloan_arbitrage_bundle(self, opportunity: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Build real flash loan arbitrage bundle with market maker math
-        - Borrows via flashLoanSimple, no own capital needed
-        - Uses market maker math to calculate optimal amount and profit
-        - Real QuoterV2 for expected output, real premium calculation
-
-        Example flow from market_maker_math.py:
-        - Borrow 10 WETH via flash loan
-        - Swap 10 WETH -> 30000 USDC on pool A (higher price)
-        - Swap 30000 USDC -> 10.1 WETH on pool B (lower price)
-        - Repay 10 WETH + premium 0.005 WETH (0.05% * 10) = 10.005 WETH
-        - Profit = 10.1 - 10.005 = 0.095 WETH - gas
-
-        This was missing per review: flash loans not built in - now built in
+        Build a REAL flash loan arbitrage bundle routed through the deployed
+        FlashLoanReceiver contract on Polygon:
+          - Borrow `asset` via flashLoanSimple (receiver = FlashLoanReceiver)
+          - executeOperation swaps asset->tokenMid on pool_a (fee_a), then
+            tokenMid->asset on pool_b (fee_b)
+          - Repays amount + 5bps premium, profit sent to owner in the same tx
+        Params are ABI-encoded (address tokenMid, uint24 fee_a, uint24 fee_b, uint256 minOut)
+        for the receiver contract. minOut is break-even (amount + premium) so the tx
+        reverts rather than take a loss.
         """
-        # Opportunity contains pool_a, pool_b, profit_eth, etc.
         pool_a = opportunity.get("pool_a")
         pool_b = opportunity.get("pool_b")
+        fee_a = opportunity.get("fee_a") or opportunity.get("pool_a_fee") or 3000
+        fee_b = opportunity.get("fee_b") or opportunity.get("pool_b_fee") or 3000
+        asset = opportunity.get("asset") or opportunity.get("token0")
+        token_mid = opportunity.get("token_mid") or opportunity.get("token1")
+        if not asset or not token_mid:
+            raise ValueError(f"Flash loan opportunity missing asset/token_mid: {opportunity}")
+
         profit_eth = opportunity.get("profit_eth", 0)
+        amount_in_wei = Web3.to_wei(max(0.01, profit_eth * 2), 'ether')
+        if asset.lower() != "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270":
+            amount_in_wei = max(amount_in_wei // (10**12), 10**6)  # 6-dec asset (USDC)
 
-        if not pool_a or not pool_b:
-            raise ValueError(f"Arbitrage opportunity missing pool addresses: {opportunity}")
+        premium = (amount_in_wei * 5) // 10000
+        amount_out_min = amount_in_wei + premium  # break-even: only succeed if net >= 0
 
-        # Use market maker math to calculate optimal amount if available
-        if HAS_MARKET_MAKER_MATH:
-            try:
-                # Try to get reserves for optimal calculation
-                # For Uniswap V3, reserve concept different than V2, but we can use liquidity
-                # This is simplified - real would use getReserves for V2 or liquidity + sqrtPrice for V3 + Quoter
-                from app.bots.market_maker_math import calculate_optimal_arbitrage_amount, calculate_flash_loan_premium, calculate_flash_loan_profit
+        try:
+            from eth_abi import encode as abi_encode
+            params = abi_encode(
+                ["address", "uint24", "uint24", "uint256"],
+                [Web3.to_checksum_address(token_mid), fee_a, fee_b, amount_out_min]
+            )
+        except ImportError:
+            params = self.w3.eth.codec.encode(
+                ["address", "uint24", "uint24", "uint256"],
+                [Web3.to_checksum_address(token_mid), fee_a, fee_b, amount_out_min],
+            )
 
-                # Example reserves - would be real via Pool contract in prod
-                # For demo, use opportunity data
-                amount_in_wei = Web3.to_wei(max(0.01, profit_eth * 2), 'ether')
-                
-                # Build flash loan params containing arbitrage instructions
-                # Params encoded as JSON with pool addresses and profit info
-                arbitrage_data = {
-                    "pool_a": pool_a,
-                    "pool_b": pool_b,
-                    "profit_eth": profit_eth,
-                    "type": "flashloan_arbitrage",
-                    "fairness_note": "Flash loan arbitrage is fair per policy allow_arbitrage=true - no victim, just DEX price deviation"
-                }
-                params = build_flash_loan_arbitrage_params(
-                    asset="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
-                    amount=amount_in_wei,
-                    arbitrage_data=arbitrage_data
-                )
+        flashloan_tx = self.build_aave_flashloan_simple(asset, amount_in_wei, params)
+        logger.info(
+            f"Flash loan arb bundle built: borrow {amount_in_wei} {asset[:8]} "
+            f"-> swap fee={fee_a}/{fee_b} minOut={amount_out_min} receiver={self.flash_loan_receiver}"
+        )
+        return [flashloan_tx]
 
-                # Build flash loan transaction that will execute arbitrage in callback and repay
-                weth = Web3.to_checksum_address("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
-                flashloan_tx = self.build_aave_flashloan_simple(
-                    asset=weth,
-                    amount=amount_in_wei,
-                    params=params
-                )
-
-                # For flash loan arbitrage, bundle is just the flash loan tx itself
-                # The actual swaps happen inside executeOperation callback of FlashLoanReceiver contract
-                # That contract must be deployed and implement the arbitrage logic: swap on pool A, swap on pool B, approve repayment
-                # For this builder, we return the flash loan tx as bundle
-                # In production, you would deploy FlashLoanReceiver contract that does:
-                #   function executeOperation(...) external returns (bool) {
-                #       // Swap borrowed WETH -> USDC on pool A via Quoter
-                #       // Swap USDC -> WETH on pool B
-                #       // Approve Pool to pull amount + premium
-                #       // Keep profit
-                #   }
-
-                logger.info(f"Flash loan arbitrage bundle built: {amount_in_wei/1e18} WETH borrowed, profit {profit_eth} ETH estimated, premium 0.05%")
-
-                return [flashloan_tx]
-
-            except Exception as e:
-                logger.warning(f"Market maker math flash loan calculation failed: {e}, falling back to regular arbitrage bundle")
-
-        # Fallback to regular arbitrage bundle without flash loan (requires own capital)
-        return self.build_arbitrage_bundle(opportunity)
 
     def build_protected_transaction(self, user_signed_raw: str) -> List[Dict[str, Any]]:
         """
