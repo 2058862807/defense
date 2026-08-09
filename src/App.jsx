@@ -501,14 +501,40 @@ function SandwichView({ data }) {
 
 function ProofsView({ data }) {
   const proofList = data?.proofData || [];
-  const verifiedCount = proofList.filter(p => p && p.verified).length;
   const totalCount = proofList.length;
+  const verifiedCount = proofList.filter(p => p && p.verified).length;
+  const failedCount = proofList.filter(p => p && p.status === 'failed').length;
+  const pendingCount = proofList.filter(p => p && p.status === 'pending').length;
+
+  let chainStatus = '—';
+  let chainTrend = 'No proofs yet';
+  let chainColor = 'var(--text-muted)';
+  if (totalCount > 0) {
+    if (failedCount > 0) {
+      chainStatus = 'FAILED';
+      chainTrend = `${failedCount} proof(s) failed verification`;
+      chainColor = 'var(--red)';
+    } else if (pendingCount > 0) {
+      chainStatus = 'PROVING';
+      chainTrend = `${pendingCount} proof(s) in flight`;
+      chainColor = 'var(--neon-gold)';
+    } else if (verifiedCount === totalCount) {
+      chainStatus = 'VERIFIED';
+      chainTrend = '100% integrity';
+      chainColor = 'var(--green)';
+    } else {
+      chainStatus = 'COMPROMISED';
+      chainTrend = 'Integrity check failed';
+      chainColor = 'var(--red)';
+    }
+  }
+
   return (
     <>
       <div style={styles.kpiStrip}>
         <KPICard label="Total Proofs" value={totalCount} trend="ZK Audit Trail" color="var(--neon-cyan)" />
         <KPICard label="Verified" value={verifiedCount} trend={`${totalCount ? ((verifiedCount/totalCount)*100).toFixed(0) : 0}% integrity`} color="var(--neon-green)" />
-        <KPICard label="Chain Status" value={verifiedCount === totalCount ? 'VERIFIED' : 'COMPROMISED'} trend="Hash chain" color={verifiedCount === totalCount ? 'var(--green)' : 'var(--red)'} />
+        <KPICard label="Chain Status" value={chainStatus} trend={chainTrend} color={chainColor} />
       </div>
       <div style={styles.panelCard}>
         <div style={styles.panelTitle}>⬡ Proof Blockchain · ZK Audit Trail</div>

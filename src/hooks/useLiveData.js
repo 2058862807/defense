@@ -550,23 +550,46 @@ export function useLiveData() {
     }
   }, [latestTx?.riskScore]);
 
-  // ── Proof data from transactions ──
+  // ── Proof data from the real ZK proof ledger (not the volatile tx buffer) ──
+  const transactionsRef = useRef(transactions);
+  useEffect(() => { transactionsRef.current = transactions; }, [transactions]);
+
   useEffect(() => {
-    const proofs = (transactions || [])
-      .filter(tx => tx && tx.decision !== 'PASS' && tx.proof)
-      .slice(0, 25)
-      .map((tx, i) => ({
-        id: `proof-${tx.hash?.substring(0, 8) ?? i}`,
-        txHash: tx.hash,
-        decision: tx.decision,
-        riskScore: tx.riskScore,
-        commitment: tx.proof?.shap_commitment ?? tx.proof?.commitment ?? `cm-${tx.hash?.substring(0, 12) ?? ''}`,
-        generated: tx.proof ? (tx.timestamp ?? new Date().toISOString()) : null,
-        verified: tx.proof?.verified ?? false,
-        timestamp: tx.timestamp,
-      }));
-    setProofData(proofs);
-  }, [transactions]);
+    let cancelled = false;
+
+    async function refreshProofLedger() {
+      try {
+        const resp = await fetch(`${API_MODEL}/proofs/ledger?limit=50`);
+        if (!resp.ok) return;
+        const payload = await resp.json();
+        const ledger = Array.isArray(payload.proofs) ? payload.proofs : [];
+        const riskByHash = new Map(
+          (transactionsRef.current || [])
+            .filter(t => t && t.hash)
+            .map(t => [t.hash, t.riskScore])
+        );
+        const proofs = ledger.map((entry, i) => ({
+          id: `proof-${entry.tx_hash?.substring(0, 8) ?? i}`,
+          txHash: entry.tx_hash,
+          decision: entry.decision,
+          riskScore: riskByHash.get(entry.tx_hash),
+          commitment: entry.commitment,
+          generated: entry.generated_at,
+          verified: !!entry.verified,
+          status: entry.status ?? (entry.verified ? 'done' : 'pending'),
+          timestamp: entry.generated_at,
+        }));
+        if (!cancelled) setProofData(proofs);
+      } catch (e) {
+        // Ledger unreachable - keep previous data
+      }
+    }
+
+    refreshProofLedger();
+    const interval = setInterval(refreshProofLedger, 5000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
 
   // ── Terminal logs ──
   const addTerminalLog = useCallback((level, message) => {
