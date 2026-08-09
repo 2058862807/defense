@@ -166,6 +166,23 @@ class Settings(BaseSettings):
     regulatory_pqc_pubkey_url: str = "https://127.0.0.1:8080/regulatory/pqc/pubkey"
     regulatory_feedback_store_path: str = "data/regulatory_feedback.jsonl"
 
+    # --- Automation ---
+    # Bots still start DISARMED unless explicitly enabled here (fail-closed).
+    bot_autostart_offense: bool = False
+    bot_autostart_defense: bool = False
+    bot_autostart_focus: str = "auto"
+    # Slack-compatible alert webhook. Events: block_decision, sandwich_attempt,
+    # bot_engagement, zk_proof_failed, proof_audit_failed, proof_anchored,
+    # kms_rotated. Leave unset to disable outbound alerts.
+    alert_webhook_url: Optional[str] = None
+    # Autonomous KMS rotation policy: a full key rotation is triggered once the
+    # oldest active key is older than this (days). 0 disables the full rotation.
+    kms_rotation_days: int = 90
+    # Periodic proof audit: re-run snarkjs groth16 verify over the N most
+    # recent completed proofs; a failure flips the entry to unverified.
+    proof_audit_interval_minutes: int = 30
+    proof_audit_reverify_count: int = 10
+
     @field_validator("env")
     def validate_production(cls, v, info):
         # Fail-closed validation

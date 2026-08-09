@@ -289,6 +289,40 @@ class CircuitIngestor:
         except FileNotFoundError:
             raise CircuitIngestError("snarkjs not found - required for verifier export")
 
+    def verify_proof(self, proof: Dict[str, Any], public_inputs: list) -> bool:
+        """Re-verify an existing Groth16 proof against the real verification key.
+
+        Used by the periodic proof audit to independently re-check that stored
+        proofs still verify (tamper-evidence for the audit trail). No mock.
+        """
+        if not proof or not public_inputs:
+            return False
+        import tempfile
+        proof_path = public_path = None
+        try:
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as pf:
+                json.dump(proof, pf)
+                proof_path = pf.name
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as pubf:
+                json.dump([str(v) for v in public_inputs], pubf)
+                public_path = pubf.name
+            result = subprocess.run(
+                [resolve_snarkjs(), "groth16", "verify", str(self.vkey_path), str(public_path), str(proof_path)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            return result.returncode == 0 and "OK" in result.stdout
+        except Exception:
+            return False
+        finally:
+            for p in (proof_path, public_path):
+                if p:
+                    try:
+                        os.unlink(p)
+                    except OSError:
+                        pass
+
     def get_proving_key_info(self) -> Dict[str, Any]:
         """Extract proving key metadata for SLSA provenance"""
         return {

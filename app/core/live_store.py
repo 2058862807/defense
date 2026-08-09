@@ -204,6 +204,27 @@ class LiveFeedStore:
         with self._lock:
             return dict(self._proofs[tx_hash]) if tx_hash in self._proofs else None
 
+    def get_proof_entries(self, limit: int = 25) -> list:
+        """Return raw proof entries (incl. full proof + public inputs), newest first."""
+        with self._lock:
+            entries = list(self._proofs.values())
+            entries.sort(key=lambda e: e.get("updated", 0), reverse=True)
+            return [dict(e) for e in entries[:limit]]
+
+    def record_proof_audit(self, tx_hash: str, verified_ok: bool) -> None:
+        """Independent periodic audit result for a completed proof."""
+        with self._lock:
+            entry = self._proofs.get(tx_hash)
+            if not entry:
+                return
+            entry["last_audited"] = time.time()
+            if verified_ok:
+                entry["verified"] = True
+                entry.pop("audit_failed", None)
+            else:
+                entry["verified"] = False
+                entry["audit_failed"] = True
+
     def get_proof_ledger(self, limit: int = 25) -> list:
         with self._lock:
             entries = list(self._proofs.values())

@@ -59,7 +59,16 @@ from app.core.security import require_vault_or_fail
 async def _startup() -> None:
     require_tls_or_fail(settings)
     require_vault_or_fail(settings)
+    # Bots are armed automatically only when explicitly enabled by policy.
+    # Fail-closed: otherwise everything starts disarmed.
+    if settings.bot_autostart_defense:
+        bot_trigger.arm("defense", focus=settings.bot_autostart_focus, armed_by="system-autostart")
+        logger.info("Defense bot auto-armed at startup (policy)")
+    if settings.bot_autostart_offense:
+        bot_trigger.arm("offense", focus=settings.bot_autostart_focus, armed_by="system-autostart")
+        logger.info("Offense bot auto-armed at startup (policy)")
     asyncio.create_task(_ensure_shared_mempool())
+    asyncio.create_task(_automation_loop())
 
 # Security middleware - enterprise
 # Loopback + E2E test host are always allowed (operator/local access and
@@ -149,6 +158,94 @@ async def _broadcast_tx(real_tx: dict) -> None:
         except Exception:
             pass
 
+# --- AUTONOMOUS OPERATIONS ------------------------------------------- #
+# On-chain anchoring, alerting, KMS rotation and proof audit run on their own
+# so the system is fully automated end-to-end (no operator required except to
+# set policy in settings).
+
+_alert_cooldown: Dict[str, float] = {}
+_last_full_rotation: float = time.time()
+
+async def _alert_webhook(event: str, data: dict, cooldown_s: float = 15.0) -> None:
+    """Fire a Slack-compatible alert. Rate-limited per event type."""
+    url = settings.alert_webhook_url
+    if not url:
+        return
+    now = time.time()
+    if now - _alert_cooldown.get(event, 0.0) < cooldown_s:
+        return
+    _alert_cooldown[event] = now
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(url, json={
+                "event": event,
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+                "environment": settings.env,
+                "payload": data,
+            })
+            if resp.status_code >= 400:
+                logger.warning(f"Alert webhook {event} returned {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"Alert delivery failed ({event}): {e}")
+
+async def _anchor_proof(tx_hash: str, zk_package: dict) -> None:
+    """Anchor a real Groth16 proof on-chain (defense context)."""
+    try:
+        from app.evm.fairness_registry import FairnessRegistryEnterprise
+        reg = FairnessRegistryEnterprise()
+        txid = await reg.submit_proof(zk_package, is_offense=False)
+        logger.info(f"Proof anchored on-chain tx={txid} for {tx_hash}")
+        await _alert_webhook("proof_anchored", {"tx_hash": tx_hash, "txid": txid})
+    except Exception as e:
+        logger.error(f"Background on-chain anchoring failed for {tx_hash}: {e}")
+
+async def _run_proof_audit() -> None:
+    """Re-verify stored proofs with snarkjs groth16 verify (tamper-evidence)."""
+    from app.zk.ingest import CircuitIngestor
+    try:
+        entries = live_store.get_proof_entries(limit=max(1, settings.proof_audit_reverify_count))
+        done = [e for e in entries if e.get("status") == "done"]
+        if not done:
+            return
+        ingestor = CircuitIngestor()
+        for e in done:
+            tx_hash = e.get("tx_hash")
+            ok = await asyncio.to_thread(
+                ingestor.verify_proof, e.get("proof"), e.get("zk_public_inputs") or []
+            )
+            live_store.record_proof_audit(tx_hash, ok)
+            if ok:
+                logger.info(f"Proof audit OK for {tx_hash}")
+            else:
+                logger.error(f"Proof audit FAILED for {tx_hash} - integrity check failed")
+                await _alert_webhook("proof_audit_failed", {"tx_hash": tx_hash})
+    except Exception as ex:
+        logger.error(f"Proof audit run failed: {ex}")
+
+async def _automation_loop() -> None:
+    """Periodic autonomous maintenance: KMS rotation + proof audit."""
+    global _last_full_rotation
+    interval = max(60.0, float(settings.proof_audit_interval_minutes) * 60.0)
+    while True:
+        try:
+            kms_manager.ensure_keys()
+            if settings.kms_rotation_days > 0:
+                now = time.time()
+                if now - _last_full_rotation >= settings.kms_rotation_days * 86400:
+                    _last_full_rotation = now
+                    res = kms_manager.rotate_now()
+                    audit_log(
+                        "KMS_ROTATE", "system", "kms_rotate", "kms", "SUCCESS",
+                        {"trigger": "auto", "new_key_id": res["new_key_id"]},
+                    )
+                    logger.info(f"Auto KMS rotation complete: {res['new_key_id']}")
+                    await _alert_webhook("kms_rotated", {"new_key_id": res["new_key_id"]})
+            await _run_proof_audit()
+        except Exception as e:
+            logger.error(f"Automation loop iteration failed: {e}")
+        await asyncio.sleep(interval)
+
 # --- WS-ONLY BOT TRIGGER REGISTRY (B6) ----------------------------- #
 # Bots are armed/disarmed exclusively over /ws and /ws/dashboard and fired by
 # the single shared mempool listener. No HTTP polling path. Fail-closed: all
@@ -223,6 +320,7 @@ async def _run_offense_trigger(focus: str) -> None:
     _bot_running["offense"] = True
     try:
         await _broadcast_bot_status(bot_trigger.state())
+        asyncio.create_task(_alert_webhook("bot_engagement", {"bot": "offense", "focus": focus}))
 
         def _worker():
             from app.bots.offense_loader import load_offense_module
@@ -259,6 +357,10 @@ async def _run_defense_trigger(tx) -> None:
     _bot_running["defense"] = True
     try:
         await _broadcast_bot_status(bot_trigger.state())
+        asyncio.create_task(_alert_webhook("bot_engagement", {
+            "bot": "defense",
+            "tx_hash": tx.get("hash") if isinstance(tx, dict) else None,
+        }))
 
         def _worker():
             from app.bots.defense_bot import DefenseBotEnterprise
@@ -373,6 +475,7 @@ async def _ensure_shared_mempool():
                     duration_ms=duration_ms,
                 )
                 await _broadcast(real_tx)
+                asyncio.create_task(_anchor_proof(tx_hash, zk_package))
             except Exception as e:
                 logger.error(f"Background ZK proof failed for {tx.get('hash', '')}: {e}")
                 real_tx["proof_status"] = "failed"
@@ -381,6 +484,7 @@ async def _ensure_shared_mempool():
                     await _broadcast(real_tx)
                 except Exception:
                     pass
+                asyncio.create_task(_alert_webhook("zk_proof_failed", {"tx_hash": tx_hash, "error": str(e)}))
             finally:
                 _pending_proofs -= 1
 
@@ -422,6 +526,13 @@ async def _ensure_shared_mempool():
 
                 if (real_tx.get("decision") or "pass").lower() == "pass":
                     real_tx["proof_status"] = "skipped"
+                elif (real_tx.get("decision") or "pass").lower() == "block":
+                    asyncio.create_task(_alert_webhook("block_decision", {
+                        "tx_hash": real_tx.get("hash"),
+                        "risk_score": real_tx.get("risk_score"),
+                        "from": tx.get("from"),
+                        "to": tx.get("to"),
+                    }))
 
                 live_store.record_tx(real_tx)
                 live_store.record_raw_tx(tx)
@@ -433,6 +544,10 @@ async def _ensure_shared_mempool():
                 attempt = intel_detector.analyze_pending_tx(tx)
                 ssaf_monitor.update(intel_detector.get_stats())
                 if attempt:
+                    asyncio.create_task(_alert_webhook("sandwich_attempt", {
+                        "tx_hash": tx.get("hash"),
+                        "type": attempt.get("type") if isinstance(attempt, dict) else None,
+                    }))
                     for conn in dashboard_manager.active_connections:
                         try:
                             await conn.send_json({
@@ -1009,22 +1124,14 @@ async def proof_request(tx_hash: str, background_tasks: BackgroundTasks):
                 logger.info(f"Manual ZK proof done for {tx_hash} ({duration_ms:.0f}ms)")
 
                 def anchor_task():
-                    import asyncio as _asyncio
-                    from app.evm.fairness_registry import FairnessRegistryEnterprise
-                    async def _anchor():
-                        try:
-                            reg = FairnessRegistryEnterprise()
-                            txid = await reg.submit_proof(zk_package, is_offense=False)
-                            logger.info(f"Proof anchored on-chain tx={txid} for {tx_hash}")
-                        except Exception as e:
-                            logger.error(f"Background on-chain anchoring failed for {tx_hash}: {e}")
-                    _asyncio.run(_anchor())
+                    asyncio.run(_anchor_proof(tx_hash, zk_package))
 
                 background_tasks.add_task(anchor_task)
             except Exception as e:
                 logger.error(f"Manual ZK proof failed for {tx_hash}: {e}")
                 live_store.record_proof_status(tx_hash, "failed")
                 await _broadcast_tx(_sync_stored_tx("failed"))
+                await _alert_webhook("zk_proof_failed", {"tx_hash": tx_hash, "source": "manual", "error": str(e)})
 
     live_store.record_proof_status(tx_hash, "pending")
     background_tasks.add_task(_generate)
