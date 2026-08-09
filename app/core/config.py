@@ -98,6 +98,23 @@ class Settings(BaseSettings):
     kafka_topic_mev: str = "prod.mev-opportunities"
     kafka_topic_risk: str = "prod.risk-scores"
 
+    # --- Internal bank / credit-union transaction stream ---
+    # Continuous ingestion of the institution's internal transaction flow
+    # (REST push + Kafka pull). Fail-closed: the stream is OFF unless
+    # internal_stream_enabled=true; every push requires the shared token.
+    internal_stream_enabled: bool = False
+    # Shared-secret token required on every REST push (X-Protean-Internal-Stream
+    # header). When unset, pushes are refused outside dev/test (fail-closed).
+    internal_tx_auth_token: Optional[SecretStr] = None
+    # Kafka topic consumed for internal transaction messages (pull path).
+    bank_tx_topic: Optional[str] = None
+    # Consumer group for the internal-transaction pull loop.
+    internal_tx_kafka_group: str = "protean-internal-tx-consumer"
+    # Max transaction items accepted per push request (DoS guard).
+    internal_tx_batch_limit: int = 500
+    # Internal flow rule thresholds (mirror risk_large_txn_review_usd).
+    internal_rule_large_amount_usd: float = 10000.0
+
     # --- Circuit Breaker ---
     cb_fail_max: int = 3  # tighter for gov
     cb_reset_timeout: int = 120
@@ -182,6 +199,22 @@ class Settings(BaseSettings):
     # recent completed proofs; a failure flips the entry to unverified.
     proof_audit_interval_minutes: int = 30
     proof_audit_reverify_count: int = 10
+
+    # --- Auto-proof / on-chain spend guard ---
+    # The shared mempool listener auto-proves every non-pass tx and anchors the
+    # proof on-chain - that spends real gas forever. Two guards apply to the
+    # AUTO path only (manual /proof/request stays uncapped):
+    #   1. Severity gate: only genuinely extreme txs auto-prove (risk score at
+    #      least proof_auto_min_risk_score, OR native value >=
+    #      proof_auto_min_value_native, OR a compliance block/high-risk flag).
+    #   2. Spend cap: at most proof_auto_max_spend_native native (POL/ETH) is
+    #      spent anchoring per proof_auto_spend_window_minutes. 0 disables auto
+    #      on-chain anchoring entirely (fail-closed); proofs are still generated
+    #      locally and recorded, just not broadcast.
+    proof_auto_min_risk_score: float = 80.0
+    proof_auto_min_value_native: float = 1.0
+    proof_auto_max_spend_native: float = 0.0
+    proof_auto_spend_window_minutes: int = 1440
 
     @field_validator("env")
     def validate_production(cls, v, info):

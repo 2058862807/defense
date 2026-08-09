@@ -112,7 +112,7 @@ class ISO20022Adapter:
             node = _local(grphdr, "TtlIntrBkSttlmAmt") if grphdr is not None else None
             ccy = node.get("Ccy") if node is not None else None
 
-        uetr = _find_text(node, "GrpHdr", "MsgId")
+        uetr = _find_text(root, "GrpHdr", "MsgId")
         txns = []
         parties = []
         for tx in (tx_infos or []):
@@ -159,7 +159,7 @@ class ISO20022Adapter:
 
         return {
             "message_family": family,
-            "root_tag": node.tag.rsplit("}", 1)[-1],
+            "root_tag": root.tag.rsplit("}", 1)[-1],
             "message_id": msg_id,
             "created": created,
             "total_amount": total_amt,

@@ -9,6 +9,7 @@ from typing import Dict, Any
 import logging
 import json
 import hashlib
+import time
 from web3 import Web3
 
 from app.evm.client import EVMClientEnterprise
@@ -16,6 +17,49 @@ from app.core.config import settings
 from app.core.logging import audit_log
 
 logger = logging.getLogger(__name__)
+
+
+class AutoAnchorBudgetExceeded(RuntimeError):
+    """Raised when the auto-anchor spend cap for the current window is exhausted."""
+
+
+class AutoAnchorBudget:
+    """Per-window spend cap for auto (mempool-driven) on-chain anchoring.
+
+    Only auto-anchored submissions go through the budget. Manual operator
+    submissions (auto_anchor=False) are never capped.
+    """
+
+    def __init__(self, max_native: float, window_minutes: int):
+        self.max_native = max_native
+        self.window_minutes = window_minutes
+        self.window_start = time.time()
+        self.spent = 0.0
+
+    def _roll_window(self) -> None:
+        if time.time() - self.window_start >= self.window_minutes * 60:
+            self.window_start = time.time()
+            self.spent = 0.0
+
+    def try_reserve(self, cost_wei: int) -> bool:
+        self._roll_window()
+        if self.max_native <= 0:
+            return False
+        cost = cost_wei / 1e18
+        if self.spent + cost > self.max_native:
+            return False
+        self.spent += cost
+        return True
+
+    def remaining_native(self) -> float:
+        self._roll_window()
+        return max(0.0, self.max_native - self.spent)
+
+
+_auto_anchor_budget = AutoAnchorBudget(
+    max_native=settings.proof_auto_max_spend_native,
+    window_minutes=settings.proof_auto_spend_window_minutes,
+)
 
 FAIRNESS_ABI_ENTERPRISE = [
     {
@@ -149,7 +193,7 @@ class FairnessRegistryEnterprise:
         h = h.rjust(64, '0')
         return bytes.fromhex(h)
 
-    async def submit_proof(self, zk_xai_package: Dict[str, Any], is_offense: bool = False) -> str:
+    async def submit_proof(self, zk_xai_package: Dict[str, Any], is_offense: bool = False, auto_anchor: bool = False) -> str:
         commitments = zk_xai_package.get("commitments", {})
         proof = zk_xai_package.get("zk_proof", {})
         fairness = zk_xai_package.get("fairness", {})
@@ -241,6 +285,16 @@ class FairnessRegistryEnterprise:
             latest = w3.eth.get_block("latest")
             base_fee = latest.get("baseFeePerGas") or w3.eth.gas_price
             max_fee = int(base_fee * 2) + priority_fee
+            # Auto-anchor spend cap: reserve the estimated cost against the
+            # window budget BEFORE broadcasting. Manual submissions bypass this.
+            if auto_anchor:
+                cost_wei = int(gas_estimate * max_fee)
+                if not _auto_anchor_budget.try_reserve(cost_wei):
+                    raise AutoAnchorBudgetExceeded(
+                        f"Auto-anchor spend cap reached: remaining budget "
+                        f"{_auto_anchor_budget.remaining_native():.6f} native, "
+                        f"required ~{cost_wei / 1e18:.6f}"
+                    )
             tx_data = {
                 "from": self.client.account.address if self.client.account else w3.eth.accounts[0],
                 "gas": int(gas_estimate * 1.2),  # 20% buffer
@@ -283,6 +337,8 @@ class FairnessRegistryEnterprise:
 
             return tx_hash.hex()
 
+        except AutoAnchorBudgetExceeded:
+            raise
         except Exception as e:
             logger.error(f"On-chain fairness proof submission failed: {e}")
             audit_log(

@@ -69,6 +69,11 @@ async def _startup() -> None:
         logger.info("Offense bot auto-armed at startup (policy)")
     asyncio.create_task(_ensure_shared_mempool())
     asyncio.create_task(_automation_loop())
+    # Internal bank / credit-union transaction stream (Kafka pull). Fail-closed:
+    # only starts when explicitly enabled by policy AND a topic is configured.
+    if settings.internal_stream_enabled and settings.bank_tx_topic:
+        asyncio.create_task(_run_internal_tx_consumer())
+        logger.info(f"Internal-tx stream consumer enabled (topic={settings.bank_tx_topic})")
 
 # Security middleware - enterprise
 # Loopback + E2E test host are always allowed (operator/local access and
@@ -189,16 +194,56 @@ async def _alert_webhook(event: str, data: dict, cooldown_s: float = 15.0) -> No
     except Exception as e:
         logger.warning(f"Alert delivery failed ({event}): {e}")
 
-async def _anchor_proof(tx_hash: str, zk_package: dict) -> None:
-    """Anchor a real Groth16 proof on-chain (defense context)."""
+async def _anchor_proof(tx_hash: str, zk_package: dict, auto: bool = True) -> None:
+    """Anchor a real Groth16 proof on-chain (defense context).
+
+    auto=True routes through the auto-anchor spend cap (severity gated upstream);
+    auto=False is an explicit operator action and is never capped.
+    """
     try:
-        from app.evm.fairness_registry import FairnessRegistryEnterprise
+        from app.evm.fairness_registry import FairnessRegistryEnterprise, AutoAnchorBudgetExceeded
         reg = FairnessRegistryEnterprise()
-        txid = await reg.submit_proof(zk_package, is_offense=False)
+        txid = await reg.submit_proof(zk_package, is_offense=False, auto_anchor=auto)
         logger.info(f"Proof anchored on-chain tx={txid} for {tx_hash}")
         await _alert_webhook("proof_anchored", {"tx_hash": tx_hash, "txid": txid})
+    except AutoAnchorBudgetExceeded as e:
+        logger.info(f"Auto-anchor deferred (spend cap) for {tx_hash}: {e}")
+        audit_log(
+            event_type="PROOF_AUTO_ANCHOR_DEFERRED",
+            actor="auto-prove",
+            action="submitFairnessProof",
+            resource=tx_hash,
+            result="DEFERRED",
+            metadata={"reason": str(e)},
+        )
     except Exception as e:
         logger.error(f"Background on-chain anchoring failed for {tx_hash}: {e}")
+
+def _is_extreme_auto_prove(real_tx: dict) -> bool:
+    """Severity gate for the AUTO-prove path.
+
+    Only genuinely extreme transactions auto-prove: high risk score, large
+    native value, or a compliance block/high-risk flag. Borderline txs are
+    deferred (proof_status=skipped) and remain provable via the manual
+    /proof/request endpoint.
+    """
+    risk = real_tx.get("risk_score") or 0
+    value = real_tx.get("amount_btc") or 0
+    compliance = real_tx.get("compliance") or {}
+    try:
+        risk = float(risk)
+    except (TypeError, ValueError):
+        risk = 0.0
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        value = 0.0
+    return (
+        risk >= settings.proof_auto_min_risk_score
+        or value >= settings.proof_auto_min_value_native
+        or bool(compliance.get("blocked"))
+        or compliance.get("overall_risk") == "high"
+    )
 
 async def _run_proof_audit() -> None:
     """Re-verify stored proofs with snarkjs groth16 verify (tamper-evidence)."""
@@ -389,6 +434,171 @@ async def _maybe_trigger_bots(real_tx: dict, tx: dict) -> None:
     except Exception as e:
         logger.error(f"[BOT-TRIGGER] dispatch failed: {e}")
 
+# --- SHARED REAL-TIME TX PROCESSING -------------------------------- #
+# One canonical handler for every live tx: the EVM mempool connector AND the
+# internal bank/CU transaction stream. Score + SHAP + compliance are fast
+# (~ms) and broadcast immediately; the Groth16 proof runs in the background
+# (capped) so the event loop is never blocked by proving.
+_MAX_PENDING_PROOFS = 8
+_pending_proofs = 0
+_zk_proof_sem = asyncio.Semaphore(2)
+
+
+def _shap_dict(explanation):
+    feature_names = explanation.get("feature_names", [])
+    shap_vals = explanation.get("shap_values", [])
+    if isinstance(shap_vals, list) and feature_names:
+        if shap_vals and isinstance(shap_vals[0], list):
+            shap_vals = shap_vals[0]
+        return {name: shap_vals[i] for i, name in enumerate(feature_names) if i < len(shap_vals)}
+    return shap_vals if isinstance(shap_vals, dict) else {}
+
+
+async def _prove_and_update(tx, real_tx):
+    """Generate + anchor the Groth16 proof in the background (queue capped)."""
+    global _pending_proofs
+    tx_hash = tx.get("hash") or real_tx.get("hash") or real_tx.get("txid")
+    if _pending_proofs >= _MAX_PENDING_PROOFS:
+        logger.warning(f"ZK proof queue saturated ({_MAX_PENDING_PROOFS} in flight) - marking {tx_hash} skipped")
+        real_tx["proof_status"] = "skipped"
+        live_store.record_proof_status(tx_hash, "skipped")
+        await _broadcast_tx(real_tx)
+        return
+    _pending_proofs += 1
+    started = time.perf_counter()
+    live_store.record_proof_status(tx_hash, "pending")
+    try:
+        async with _zk_proof_sem:
+            zk_package = await asyncio.to_thread(xai_coupler.generate_zk_proof, tx)
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        if not zk_package.get("zk_proof"):
+            raise RuntimeError(
+                f"ZK proof returned empty (zk_status={zk_package.get('zk_status', 'FAILED')}) - degraded path must not mark done"
+            )
+        real_tx["proof_status"] = "done"
+        real_tx["proof"] = zk_package.get("zk_proof")
+        real_tx["zk_public_inputs"] = zk_package.get("zk_public_inputs", [])
+        live_store.record_proof_status(
+            tx_hash,
+            "done",
+            proof=zk_package.get("zk_proof"),
+            zk_public_inputs=zk_package.get("zk_public_inputs", []),
+            duration_ms=duration_ms,
+        )
+        await _broadcast_tx(real_tx)
+        asyncio.create_task(_anchor_proof(tx_hash, zk_package))
+    except Exception as e:
+        logger.error(f"Background ZK proof failed for {tx.get('hash', '')}: {e}")
+        real_tx["proof_status"] = "failed"
+        live_store.record_proof_status(tx_hash, "failed")
+        try:
+            await _broadcast_tx(real_tx)
+        except Exception:
+            pass
+        asyncio.create_task(_alert_webhook("zk_proof_failed", {"tx_hash": tx_hash, "error": str(e)}))
+    finally:
+        _pending_proofs -= 1
+
+
+async def process_shared_tx(tx):
+    """Canonical live-tx handler shared by the mempool connector and the
+    internal bank/CU transaction stream.
+
+    For internal (fiat) txs the EVM-only steps are skipped (mempool intel /
+    sandwich detection / bot engagement) and the normalizer's fiat rule overlay
+    (rule_risk_bonus) is folded into the ML score.
+    """
+    try:
+        def _process():
+            from app.compliance.service import compliance_service
+            score, meta = scorer.score(tx)
+            compliance = compliance_service.check_address(
+                address=tx.get("user") or tx.get("from"),
+                name=None,
+                country=tx.get("country") or "United States"
+            )
+            explanation = xai_coupler.explain(tx)
+            commitments = xai_coupler.create_commitments(tx, score, explanation)
+
+            if tx.get("is_internal"):
+                bonus = float(tx.get("rule_risk_bonus", 0) or 0)
+                if bonus:
+                    score = min(1.0, score + bonus / 100.0)
+
+            return {
+                "hash": tx.get("hash"),
+                "txid": tx.get("hash"),
+                "risk_score": score * 100,
+                "score": score,
+                "decision": "block" if score > 0.7 else "step" if score > 0.45 else "pass",
+                "shap_values": _shap_dict(explanation),
+                "shapVals": _shap_dict(explanation),
+                "source": tx.get("source") or "real_mempool",
+                "ledger": (tx.get("to_chain") or "ETH").upper(),
+                "amount_btc": tx.get("value_eth", 0),
+                "amount": tx.get("amount", tx.get("value_eth", 0)),
+                "currency": tx.get("currency"),
+                "fee_rate": tx.get("gas_price_gwei", 0),
+                "timestamp": tx.get("timestamp") or __import__("datetime").datetime.utcnow().isoformat(),
+                "from": tx.get("from"),
+                "to": tx.get("to"),
+                "proof_status": "pending",
+                "proof": None,
+                "compliance": compliance,
+                "explanation": explanation,
+                "commitments": commitments
+            }
+
+        real_tx = await asyncio.to_thread(_process)
+
+        if (real_tx.get("decision") or "pass").lower() == "pass":
+            real_tx["proof_status"] = "skipped"
+        elif (real_tx.get("decision") or "pass").lower() == "block":
+            asyncio.create_task(_alert_webhook("block_decision", {
+                "tx_hash": real_tx.get("hash"),
+                "risk_score": real_tx.get("risk_score"),
+                "from": tx.get("from"),
+                "to": tx.get("to"),
+                "source": tx.get("source"),
+            }))
+
+        live_store.record_tx(real_tx)
+        live_store.record_raw_tx(tx)
+        await _broadcast_tx(real_tx)
+        if (real_tx.get("decision") or "pass").lower() != "pass":
+            if _is_extreme_auto_prove(real_tx):
+                asyncio.create_task(_prove_and_update(tx, real_tx))
+            else:
+                real_tx["proof_status"] = "skipped"
+                live_store.record_proof_status(
+                    real_tx.get("hash") or real_tx.get("txid"), "skipped"
+                )
+                await _broadcast_tx(real_tx)
+
+        if not tx.get("is_internal"):
+            await _maybe_trigger_bots(real_tx, tx)
+            from app.mev_intel import intel_detector
+            attempt = intel_detector.analyze_pending_tx(tx)
+            ssaf_monitor.update(intel_detector.get_stats())
+            if attempt:
+                asyncio.create_task(_alert_webhook("sandwich_attempt", {
+                    "tx_hash": tx.get("hash"),
+                    "type": attempt.get("type") if isinstance(attempt, dict) else None,
+                }))
+                for conn in dashboard_manager.active_connections:
+                    try:
+                        await conn.send_json({
+                            "type": "intel_update",
+                            "attempt": attempt,
+                            "stats": intel_detector.get_stats(),
+                        })
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.error(f"Shared real tx processing failed: {e}")
+        return None
+    return real_tx
+
 # --- SHARED MEMPOOL LISTENER --------------------------------------- #
 # ONE Alchemy subscription per process, broadcast to every /ws and
 # /ws/dashboard client. Per-client connectors each opened their own
@@ -406,8 +616,6 @@ async def _ensure_shared_mempool():
             _shared_mempool_status = "running"
             return "running"
         from app.evm.mempool_connector import MempoolConnectorEnterprise
-        from app.compliance.service import compliance_service
-        from app.mev_intel import intel_detector
 
         connector = MempoolConnectorEnterprise()
 
@@ -415,150 +623,9 @@ async def _ensure_shared_mempool():
         # are fast (~ms). To keep the mempool stream responsive we broadcast the
         # fast verdict immediately and generate the Groth16 proof in the
         # background (capped) so the event loop is never blocked by proving.
-        _MAX_PENDING_PROOFS = 8
-        _pending_proofs = 0
-        _zk_proof_sem = asyncio.Semaphore(2)
-
-        def _shap_dict(explanation):
-            feature_names = explanation.get("feature_names", [])
-            shap_vals = explanation.get("shap_values", [])
-            if isinstance(shap_vals, list) and feature_names:
-                if shap_vals and isinstance(shap_vals[0], list):
-                    shap_vals = shap_vals[0]
-                return {name: shap_vals[i] for i, name in enumerate(feature_names) if i < len(shap_vals)}
-            return shap_vals if isinstance(shap_vals, dict) else {}
-
-        async def _broadcast(real_tx):
-            for conn in manager.active_connections:
-                try:
-                    await conn.send_json({"type": "tx", "tx": real_tx, "transaction": real_tx})
-                except Exception:
-                    pass
-            for conn in dashboard_manager.active_connections:
-                try:
-                    await conn.send_json({
-                        "type": "dashboard_update",
-                        "transactions": [real_tx],
-                        "metrics": live_store.get_metrics(),
-                    })
-                except Exception:
-                    pass
-
-        async def _prove_and_update(tx, real_tx):
-            nonlocal _pending_proofs
-            tx_hash = tx.get("hash") or real_tx.get("hash") or real_tx.get("txid")
-            if _pending_proofs >= _MAX_PENDING_PROOFS:
-                logger.warning(f"ZK proof queue saturated ({_MAX_PENDING_PROOFS} in flight) - marking {tx_hash} skipped")
-                real_tx["proof_status"] = "skipped"
-                live_store.record_proof_status(tx_hash, "skipped")
-                await _broadcast(real_tx)
-                return
-            _pending_proofs += 1
-            started = time.perf_counter()
-            live_store.record_proof_status(tx_hash, "pending")
-            try:
-                async with _zk_proof_sem:
-                    zk_package = await asyncio.to_thread(xai_coupler.generate_zk_proof, tx)
-                duration_ms = (time.perf_counter() - started) * 1000.0
-                if not zk_package.get("zk_proof"):
-                    raise RuntimeError(
-                        f"ZK proof returned empty (zk_status={zk_package.get('zk_status', 'FAILED')}) - degraded path must not mark done"
-                    )
-                real_tx["proof_status"] = "done"
-                real_tx["proof"] = zk_package.get("zk_proof")
-                real_tx["zk_public_inputs"] = zk_package.get("zk_public_inputs", [])
-                live_store.record_proof_status(
-                    tx_hash,
-                    "done",
-                    proof=zk_package.get("zk_proof"),
-                    zk_public_inputs=zk_package.get("zk_public_inputs", []),
-                    duration_ms=duration_ms,
-                )
-                await _broadcast(real_tx)
-                asyncio.create_task(_anchor_proof(tx_hash, zk_package))
-            except Exception as e:
-                logger.error(f"Background ZK proof failed for {tx.get('hash', '')}: {e}")
-                real_tx["proof_status"] = "failed"
-                live_store.record_proof_status(tx_hash, "failed")
-                try:
-                    await _broadcast(real_tx)
-                except Exception:
-                    pass
-                asyncio.create_task(_alert_webhook("zk_proof_failed", {"tx_hash": tx_hash, "error": str(e)}))
-            finally:
-                _pending_proofs -= 1
-
-        async def on_shared_tx(tx):
-            try:
-                def _process():
-                    score, meta = scorer.score(tx)
-                    compliance = compliance_service.check_address(
-                        address=tx.get("user") or tx.get("from"),
-                        name=None,
-                        country=tx.get("country") or "United States"
-                    )
-                    explanation = xai_coupler.explain(tx)
-                    commitments = xai_coupler.create_commitments(tx, score, explanation)
-
-                    return {
-                        "hash": tx.get("hash"),
-                        "txid": tx.get("hash"),
-                        "risk_score": score * 100,
-                        "score": score,
-                        "decision": "block" if score > 0.7 else "step" if score > 0.45 else "pass",
-                        "shap_values": _shap_dict(explanation),
-                        "shapVals": _shap_dict(explanation),
-                        "source": "real_mempool",
-                        "ledger": (tx.get("to_chain") or "ETH").upper(),
-                        "amount_btc": tx.get("value_eth", 0),
-                        "fee_rate": tx.get("gas_price_gwei", 0),
-                        "timestamp": tx.get("timestamp") or __import__("datetime").datetime.utcnow().isoformat(),
-                        "from": tx.get("from"),
-                        "to": tx.get("to"),
-                        "proof_status": "pending",
-                        "proof": None,
-                        "compliance": compliance,
-                        "explanation": explanation,
-                        "commitments": commitments
-                    }
-
-                real_tx = await asyncio.to_thread(_process)
-
-                if (real_tx.get("decision") or "pass").lower() == "pass":
-                    real_tx["proof_status"] = "skipped"
-                elif (real_tx.get("decision") or "pass").lower() == "block":
-                    asyncio.create_task(_alert_webhook("block_decision", {
-                        "tx_hash": real_tx.get("hash"),
-                        "risk_score": real_tx.get("risk_score"),
-                        "from": tx.get("from"),
-                        "to": tx.get("to"),
-                    }))
-
-                live_store.record_tx(real_tx)
-                live_store.record_raw_tx(tx)
-                await _broadcast(real_tx)
-                if (real_tx.get("decision") or "pass").lower() != "pass":
-                    asyncio.create_task(_prove_and_update(tx, real_tx))
-                await _maybe_trigger_bots(real_tx, tx)
-
-                attempt = intel_detector.analyze_pending_tx(tx)
-                ssaf_monitor.update(intel_detector.get_stats())
-                if attempt:
-                    asyncio.create_task(_alert_webhook("sandwich_attempt", {
-                        "tx_hash": tx.get("hash"),
-                        "type": attempt.get("type") if isinstance(attempt, dict) else None,
-                    }))
-                    for conn in dashboard_manager.active_connections:
-                        try:
-                            await conn.send_json({
-                                "type": "intel_update",
-                                "attempt": attempt,
-                                "stats": intel_detector.get_stats(),
-                            })
-                        except Exception:
-                            pass
-            except Exception as e:
-                logger.error(f"Shared real tx processing failed: {e}")
+        # The canonical handler (score -> compliance -> ledger -> broadcast ->
+        # gated auto-prove) lives at module level so the internal bank/CU
+        # transaction stream shares exactly the same pipeline.
 
         async def _mempool_watchdog():
             nonlocal connector
@@ -571,7 +638,7 @@ async def _ensure_shared_mempool():
                 await asyncio.sleep(5)
                 try:
                     connector = MempoolConnectorEnterprise()
-                    connector.register_callback(on_shared_tx)
+                    connector.register_callback(process_shared_tx)
                     await connector.connect()
                     logger.info("Mempool connector recreated and reconnected")
                 except Exception as e2:
@@ -579,7 +646,7 @@ async def _ensure_shared_mempool():
                     await asyncio.sleep(10)
 
         try:
-            connector.register_callback(on_shared_tx)
+            connector.register_callback(process_shared_tx)
             await connector.connect()
             asyncio.create_task(_mempool_watchdog())
             _mempool_started = True
@@ -1124,7 +1191,7 @@ async def proof_request(tx_hash: str, background_tasks: BackgroundTasks):
                 logger.info(f"Manual ZK proof done for {tx_hash} ({duration_ms:.0f}ms)")
 
                 def anchor_task():
-                    asyncio.run(_anchor_proof(tx_hash, zk_package))
+                    asyncio.run(_anchor_proof(tx_hash, zk_package, auto=False))
 
                 background_tasks.add_task(anchor_task)
             except Exception as e:
@@ -1306,3 +1373,167 @@ async def sandwich_detect(body: SandwichDetectRequest):
         "blocked": blocked,
         "blocked_reasons": blocked_reasons,
     }
+
+
+# ---------------------------------------------------------------------------
+# Internal bank / credit-union transaction stream (REST push + Kafka pull)
+# ---------------------------------------------------------------------------
+import hmac as _hmac
+from app.integrations.internal_stream import PROVIDERS as INTERNAL_STREAM_PROVIDERS
+from app.integrations.internal_stream import normalizer as internal_normalizer
+
+
+async def _run_internal_tx_consumer() -> None:
+    """Kafka pull path for the internal transaction stream (started at boot when
+    enabled by policy). Reconnects forever; never raises out."""
+    from app.streaming.internal_tx_consumer import InternalTxConsumer
+    try:
+        consumer = InternalTxConsumer()
+        consumer.register_callback(_process_internal_tx)
+        await consumer.run()
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.error(f"Internal-tx stream consumer died: {e}")
+
+
+async def _process_internal_tx(tx: dict) -> dict:
+    """Route one normalized internal tx through the shared live pipeline
+    (score -> compliance -> ledger -> dashboard -> gated auto-prove) and publish
+    the decision to the institution's stream (Kafka + signed webhooks)."""
+    verdict = await process_shared_tx(tx)
+    if verdict:
+        asyncio.create_task(_publish_internal_decision(tx, verdict))
+    return verdict or {}
+
+
+async def _publish_internal_decision(tx: dict, verdict: dict) -> None:
+    from app.integrations.events import publisher
+    try:
+        await publisher.publish_decision({
+            "event_type": "internal_tx.analyzed",
+            "tx_hash": verdict.get("hash") or tx.get("hash"),
+            "external_id": tx.get("external_id"),
+            "source": tx.get("source"),
+            "decision": verdict.get("decision"),
+            "risk_score": verdict.get("risk_score"),
+            "compliance_blocked": (verdict.get("compliance") or {}).get("blocked", False),
+            "risk_signals": tx.get("risk_signals", []),
+            "amount": tx.get("amount"),
+            "currency": tx.get("currency"),
+            "from": tx.get("from"),
+            "to": tx.get("to"),
+            "timestamp": verdict.get("timestamp"),
+        })
+    except Exception as e:
+        logger.error(f"Internal decision publish failed: {e}")
+
+
+async def _require_internal_stream_token(
+    x_protean_internal_stream: Optional[str] = Header(default=None, alias="X-Protean-Internal-Stream"),
+) -> None:
+    """Fail-closed auth for the internal stream. When INTERNAL_TX_AUTH_TOKEN is
+    configured it must match exactly; in production a missing config is also
+    refused so the stream can never run unauthenticated."""
+    expected = settings.internal_tx_auth_token.get_secret_value() if settings.internal_tx_auth_token else None
+    if expected:
+        if not x_protean_internal_stream or not _hmac.compare_digest(x_protean_internal_stream, expected):
+            raise HTTPException(status_code=401, detail="invalid internal stream token")
+        return
+    if settings.is_production():
+        raise HTTPException(
+            status_code=503,
+            detail="internal stream not configured for production (set INTERNAL_TX_AUTH_TOKEN)",
+        )
+
+
+async def _ingest_internal_batch(payload: Any) -> dict:
+    if not settings.internal_stream_enabled and settings.is_production():
+        raise HTTPException(status_code=503, detail="internal transaction stream disabled by policy")
+    results = internal_normalizer.normalize_batch(payload)
+    items_out = []
+    accepted = 0
+    for r in results:
+        if not r["ok"]:
+            items_out.append({"ref": r["ref"], "ok": False, "error": r["error"]})
+            continue
+        verdict = await _process_internal_tx(r["tx"])
+        accepted += 1
+        items_out.append({
+            "ref": r["ref"],
+            "ok": True,
+            "txid": r["tx"].get("hash"),
+            "decision": verdict.get("decision"),
+            "risk_score": verdict.get("risk_score"),
+            "proof_status": verdict.get("proof_status"),
+            "compliance_blocked": (verdict.get("compliance") or {}).get("blocked", False),
+            "risk_signals": r["tx"].get("risk_signals", []),
+        })
+    audit_log(
+        "INTERNAL_STREAM_INGEST", "internal-stream", "ingest", "internal-transactions",
+        "SUCCESS", {"accepted": accepted, "rejected": len(results) - accepted},
+    )
+    return {"stream": "internal", "accepted": accepted, "rejected": len(results) - accepted, "items": items_out}
+
+
+@app.get("/internal/transactions/status")
+async def internal_stream_status(
+    _token: None = Depends(_require_internal_stream_token),
+):
+    """Read-only stream health. Lists the enabled transports + auth posture."""
+    return {
+        "stream": "internal",
+        "enabled": settings.internal_stream_enabled,
+        "kafka_topic": settings.bank_tx_topic,
+        "auth_required": bool(settings.internal_tx_auth_token) or settings.is_production(),
+        "providers": sorted(INTERNAL_STREAM_PROVIDERS),
+        "batch_limit": settings.internal_tx_batch_limit,
+    }
+
+
+@app.post("/internal/transactions")
+async def internal_transactions_push(
+    request: Request,
+    _token: None = Depends(_require_internal_stream_token),
+):
+    """Push internal bank/CU transactions. Accepts either:
+      * {"transactions": [...]} with an optional default "provider"
+      * a single universal transaction object
+      * a raw array of transaction objects
+    Each item may carry its own "provider" / "format" to pick an adapter."""
+    try:
+        payload = json.loads(await request.body())
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid JSON body: {e}")
+    return await _ingest_internal_batch(payload)
+
+
+@app.post("/internal/transactions/{provider}")
+async def internal_transactions_push_provider(
+    provider: str,
+    request: Request,
+    _token: None = Depends(_require_internal_stream_token),
+):
+    """Provider-scoped push (mambu|vault|temenos_t24|jack_henry_symitar|
+    iso20022|fix|universal). For iso20022 the raw XML message is accepted."""
+    provider = provider.lower()
+    if provider not in INTERNAL_STREAM_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown provider '{provider}'; available: {sorted(INTERNAL_STREAM_PROVIDERS)}",
+        )
+    body = await request.body()
+    if provider == "iso20022":
+        payload = {"provider": "iso20022", "message": body.decode("utf-8", errors="replace")}
+    else:
+        try:
+            payload = json.loads(body)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"invalid JSON body: {e}")
+        if isinstance(payload, dict) and "provider" not in payload:
+            payload = {**payload, "provider": provider}
+        elif isinstance(payload, list):
+            payload = [{"provider": provider, **p} if isinstance(p, dict) else p for p in payload]
+        else:
+            raise HTTPException(status_code=400, detail="payload must be an object or array")
+    return await _ingest_internal_batch(payload)
