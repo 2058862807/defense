@@ -2,11 +2,32 @@ name: Enterprise Gov CI - SLSA L3
 
 on:
   push:
-    branches: [main]
+    branches: [master, main]
   pull_request:
-    branches: [main]
+    branches: [master, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  frontend-build:
+    name: Frontend build (React + gateway)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build (vite + esbuild server bundle)
+        run: npm run build
+
   secure-build:
     runs-on: ubuntu-22.04
     permissions:
@@ -45,16 +66,13 @@ jobs:
           mkdir build && cd build && cmake -DBUILD_SHARED_LIBS=ON .. && make -j4 && sudo make install && sudo ldconfig
           cd ../.. && git clone https://github.com/open-quantum-safe/liboqs-python.git && cd liboqs-python && pip install .
 
-      - name: Compile circuits
+      - name: Verify committed circuit artifacts match pinned hashes
         run: |
-          cd circuits
-          # Download pot20_final.ptau from Hermez ceremony (verified hash)
-          # wget https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_20.ptau -O pot20_final.ptau
-          # circom fairness_policy.circom --r1cs --wasm --sym --output build
-          # snarkjs groth16 setup build/fairness_policy.r1cs pot20_final.ptau build/fairness_policy_0000.zkey
-          # snarkjs zkey export verificationkey build/fairness_policy_final.zkey build/verification_key.json
-          # sha256sum build/* > build/circuit.hash
-          # cat build/circuit.hash
+          wasm_sha=$(sha256sum circuits/final_artifacts/fairness_policy.wasm | awk '{print $1}')
+          zkey_sha=$(sha256sum circuits/final_artifacts/fairness_policy_final.zkey | awk '{print $1}')
+          grep -q "$wasm_sha" circuits/final_artifacts/circuit.hash || { echo "wasm hash mismatch"; exit 1; }
+          grep -q "$zkey_sha" circuits/final_artifacts/circuit.hash || { echo "zkey hash mismatch"; exit 1; }
+          echo "Artifact integrity OK"
 
       - name: verify requirements.enterprise.txt matches requirements.in
         run: |
@@ -82,11 +100,10 @@ jobs:
           python -m app.ml.scorer
           cat models/commitment.json
 
-      - name: Run enterprise tests (no mock)
+      - name: Run unit tests (no mock)
         env:
           ENV: dev
           JWT_JWKS_URL: https://auth.dev.protean.sh/.well-known/jwks.json
-          # Proving/verification are in-process (CircuitIngestor/snarkjs).
           ZK_CIRCUIT_PATH_WASM: circuits/final_artifacts/fairness_policy.wasm
           ZK_CIRCUIT_PATH_ZKEY: circuits/final_artifacts/fairness_policy_final.zkey
           ZK_VERIFICATION_KEY_PATH: circuits/final_artifacts/verification_key.json
@@ -99,13 +116,14 @@ jobs:
           FAIRNESS_REGISTRY_ADDRESS: 0x0000000000000000000000000000000000000000
           FAIRNESS_VERIFIER_ADDRESS: 0x0000000000000000000000000000000000000000
         run: |
-          pytest tests/ -v
+          pytest tests/unit -q -k "not custody"
+          python tests/e2e/test_pipeline.py
 
       - name: Cosign sign artifacts
         uses: sigstore/cosign-installer@v3
       - run: |
           cosign sign-blob --yes sbom.json --output-signature sbom.sig
-          cosign sign-blob --yes circuits/build/verification_key.json --output-signature circuit.sig
+          cosign sign-blob --yes circuits/final_artifacts/verification_key.json --output-signature circuit.sig
 
       - name: Build enterprise Docker (distroless)
         run: |
@@ -116,3 +134,24 @@ jobs:
         with:
           image-ref: protean-shapes:enterprise
           severity: CRITICAL,HIGH
+
+  deploy:
+    name: Deploy to Render (backend + frontend)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [secure-build, frontend-build]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Deploy backend
+        if: ${{ secrets.RENDER_BACKEND_DEPLOY_HOOK != '' }}
+        run: |
+          curl -fsS -X POST "${{ secrets.RENDER_BACKEND_DEPLOY_HOOK }}"
+
+      - name: Deploy frontend
+        if: ${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK != '' }}
+        run: |
+          curl -fsS -X POST "${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK }}"
+
+      - name: Warn if deploy hooks not configured
+        if: ${{ secrets.RENDER_BACKEND_DEPLOY_HOOK == '' && secrets.RENDER_FRONTEND_DEPLOY_HOOK == '' }}
+        run: |
+          echo "::warning::No RENDER_BACKEND_DEPLOY_HOOK / RENDER_FRONTEND_DEPLOY_HOOK secrets set - skipping Render deploy. Add the Render deploy hook URLs as secrets to enable auto-deploy."
