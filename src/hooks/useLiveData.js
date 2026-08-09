@@ -582,6 +582,7 @@ export function useLiveData() {
           commitment: entry.commitment,
           generated: entry.generated_at,
           verified: !!entry.verified,
+          proofExists: !!entry.proof_exists,
           status: entry.status ?? (entry.verified ? 'done' : 'pending'),
           timestamp: entry.generated_at,
         }));

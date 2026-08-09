@@ -505,19 +505,36 @@ function ProofsView({ data }) {
   const verifiedCount = proofList.filter(p => p && p.verified).length;
   const failedCount = proofList.filter(p => p && p.status === 'failed').length;
   const pendingCount = proofList.filter(p => p && p.status === 'pending').length;
+  const skippedCount = proofList.filter(p => p && p.status === 'skipped').length;
+  // Genuine integrity failure: a completed proof that failed verification.
+  const integrityFailures = proofList.filter(p => p && p.status === 'done' && (!p.verified || !p.proofExists)).length;
 
   let chainStatus = '—';
   let chainTrend = 'No proofs yet';
   let chainColor = 'var(--text-muted)';
   if (totalCount > 0) {
-    if (failedCount > 0) {
+    if (integrityFailures > 0) {
+      chainStatus = 'COMPROMISED';
+      chainTrend = `${integrityFailures} proof(s) failed integrity verification`;
+      chainColor = 'var(--red)';
+    } else if (failedCount > 0) {
       chainStatus = 'FAILED';
-      chainTrend = `${failedCount} proof(s) failed verification`;
+      chainTrend = `${failedCount} proof(s) failed generation`;
       chainColor = 'var(--red)';
     } else if (pendingCount > 0) {
       chainStatus = 'PROVING';
       chainTrend = `${pendingCount} proof(s) in flight`;
       chainColor = 'var(--neon-gold)';
+    } else if (skippedCount > 0) {
+      if (verifiedCount === 0) {
+        chainStatus = 'DEFERRED';
+        chainTrend = `${skippedCount} proof(s) deferred (PASS / queue saturated)`;
+        chainColor = 'var(--text-muted)';
+      } else {
+        chainStatus = 'VERIFIED';
+        chainTrend = `${verifiedCount} verified · ${skippedCount} deferred`;
+        chainColor = 'var(--green)';
+      }
     } else if (verifiedCount === totalCount) {
       chainStatus = 'VERIFIED';
       chainTrend = '100% integrity';

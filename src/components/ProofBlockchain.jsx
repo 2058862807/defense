@@ -22,12 +22,16 @@ const ProofBlockchain = ({ proofs = [] }) => {
     return () => timers.forEach(clearTimeout);
   }, [proofs]);
 
-  // Determine chain verification status - pending proofs are in-flight, not compromised
+  // Determine chain verification status - pending proofs are in-flight,
+  // skipped/deferred proofs are neutral (never compromised).
   const hasFailed = proofs.some((p) => p && p.status === 'failed');
   const hasPending = proofs.some((p) => p && p.status === 'pending');
+  const hasSkipped = proofs.some((p) => p && p.status === 'skipped');
   const doneCount = proofs.filter((p) => p && (p.status === 'done' || p.verified)).length;
-  const chainVerified = proofs.length > 0 && !hasFailed && !hasPending && doneCount === proofs.length;
-  const chainProving = proofs.length > 0 && !hasFailed && hasPending;
+  const activeCount = proofs.filter((p) => p && p.status !== 'skipped').length;
+  const chainVerified = activeCount > 0 && !hasFailed && !hasPending && doneCount === activeCount;
+  const chainProving = activeCount > 0 && !hasFailed && hasPending;
+  const chainDeferred = proofs.length > 0 && activeCount === 0 && hasSkipped;
 
   const truncateHash = (hash) => {
     if (!hash) return '—';
@@ -82,12 +86,16 @@ const ProofBlockchain = ({ proofs = [] }) => {
             ? 'rgba(0, 255, 136, 0.06)'
             : chainProving
             ? 'rgba(255, 191, 0, 0.06)'
+            : chainDeferred
+            ? 'rgba(255, 255, 255, 0.04)'
             : 'rgba(255, 51, 85, 0.06)',
           border: `1px solid ${
             chainVerified
               ? 'rgba(0,255,136,0.3)'
               : chainProving
               ? 'rgba(255,191,0,0.3)'
+              : chainDeferred
+              ? 'rgba(255,255,255,0.2)'
               : 'rgba(255,51,85,0.3)'
           }`,
           borderRadius: '8px',
@@ -95,21 +103,23 @@ const ProofBlockchain = ({ proofs = [] }) => {
             ? '0 0 20px rgba(0,255,136,0.15)'
             : chainProving
             ? '0 0 20px rgba(255,191,0,0.15)'
+            : chainDeferred
+            ? '0 0 20px rgba(255,255,255,0.08)'
             : '0 0 20px rgba(255,51,85,0.15)',
         }}
       >
         <span style={{ fontSize: '18px', marginRight: '8px' }}>
-          {chainVerified ? '✅' : chainProving ? '⏳' : '❌'}
+          {chainVerified ? '✅' : chainProving ? '⏳' : chainDeferred ? '⏭' : '❌'}
         </span>
         <span
           style={{
-            color: chainVerified ? '#00ff88' : chainProving ? '#ffbf00' : '#ff3355',
+            color: chainVerified ? '#00ff88' : chainProving ? '#ffbf00' : chainDeferred ? '#aaa' : '#ff3355',
             fontWeight: 'bold',
             fontSize: '14px',
             letterSpacing: '1px',
           }}
         >
-          {chainVerified ? 'CHAIN VERIFIED' : chainProving ? 'CHAIN PROVING…' : 'CHAIN COMPROMISED'}
+          {chainVerified ? 'CHAIN VERIFIED' : chainProving ? 'CHAIN PROVING…' : chainDeferred ? 'CHAIN DEFERRED' : 'CHAIN COMPROMISED'}
         </span>
       </div>
 
@@ -121,8 +131,9 @@ const ProofBlockchain = ({ proofs = [] }) => {
           const isVisible = visible.includes(index);
           const isVerified = proof.verified;
           const isPending = proof.status === 'pending';
-          const glowColor = isPending ? 'rgba(255,191,0,0.4)' : isVerified ? 'rgba(0,255,255,0.4)' : 'rgba(255,51,85,0.4)';
-          const borderColor = isPending ? '#ffbf00' : isVerified ? '#00ffff' : '#ff3355';
+          const isSkipped = proof.status === 'skipped';
+          const glowColor = isSkipped ? 'rgba(255,255,255,0.15)' : isPending ? 'rgba(255,191,0,0.4)' : isVerified ? 'rgba(0,255,255,0.4)' : 'rgba(255,51,85,0.4)';
+          const borderColor = isSkipped ? '#666' : isPending ? '#ffbf00' : isVerified ? '#00ffff' : '#ff3355';
 
           return (
             <React.Fragment key={proof.id || index}>
@@ -132,7 +143,7 @@ const ProofBlockchain = ({ proofs = [] }) => {
                   style={{
                     width: '2px',
                     height: '30px',
-                    borderLeft: `2px dashed ${isVerified ? 'rgba(0,255,255,0.3)' : 'rgba(255,51,85,0.3)'}`,
+                    borderLeft: `2px dashed ${isVerified ? 'rgba(0,255,255,0.3)' : isSkipped ? 'rgba(255,255,255,0.15)' : 'rgba(255,51,85,0.3)'}`,
                     margin: '0 auto',
                     opacity: isVisible ? 1 : 0,
                     transition: 'opacity 0.5s ease',
@@ -207,15 +218,17 @@ const ProofBlockchain = ({ proofs = [] }) => {
                     <span
                       style={{
                         fontSize: '16px',
-                        color: isPending ? '#ffbf00' : isVerified ? '#00ff88' : '#ff3355',
-                        filter: isPending
+                        color: isSkipped ? '#777' : isPending ? '#ffbf00' : isVerified ? '#00ff88' : '#ff3355',
+                        filter: isSkipped
+                          ? 'none'
+                          : isPending
                           ? 'drop-shadow(0 0 4px rgba(255,191,0,0.6))'
                           : isVerified
                           ? 'drop-shadow(0 0 4px rgba(0,255,136,0.6))'
                           : 'drop-shadow(0 0 4px rgba(255,51,85,0.6))',
                       }}
                     >
-                      {isPending ? '…' : isVerified ? '✓' : '✗'}
+                      {isSkipped ? '⏭' : isPending ? '…' : isVerified ? '✓' : '✗'}
                     </span>
                   </div>
                 </div>
