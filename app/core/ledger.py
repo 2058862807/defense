@@ -162,17 +162,28 @@ class HashChainedLedger:
         created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         canonical = _canonical_json(payload or {})
         with self._lock:
-            prev = self._head or ""
-            preimage = "|".join(
-                [prev, created_at, event_type, tx_hash or "", status or "", canonical]
-            )
-            entry_hash = hashlib.sha256(preimage.encode("utf-8")).hexdigest()
-            self._conn.execute(
-                "INSERT INTO ledger_entries (created_at, event_type, tx_hash, status, payload, prev_hash, entry_hash)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (created_at, event_type, tx_hash, status, canonical, prev, entry_hash),
-            )
-            self._conn.commit()
+            # BEGIN IMMEDIATE takes the SQLite write lock (WAL mode), serializing
+            # appends across ALL processes so no two writers can fork the chain.
+            # The head is re-read under that lock, never trusted from memory.
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                prev_row = self._conn.execute(
+                    "SELECT entry_hash FROM ledger_entries ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                prev = prev_row[0] if prev_row else ""
+                preimage = "|".join(
+                    [prev, created_at, event_type, tx_hash or "", status or "", canonical]
+                )
+                entry_hash = hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+                self._conn.execute(
+                    "INSERT INTO ledger_entries (created_at, event_type, tx_hash, status, payload, prev_hash, entry_hash)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (created_at, event_type, tx_hash, status, canonical, prev, entry_hash),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
             self._head = entry_hash
             entry = {
                 "id": self._conn.execute("SELECT last_insert_rowid()").fetchone()[0],
@@ -201,14 +212,16 @@ class HashChainedLedger:
             " FROM ledger_entries ORDER BY id ASC"
         ).fetchall()
         prev = ""
+        checked = 0
         for row in rows:
             (rid, created_at, event_type, tx_hash, status, payload, prev_hash, entry_hash) = row
             preimage = "|".join([prev_hash, created_at, event_type, tx_hash or "", status or "", payload])
             recomputed = hashlib.sha256(preimage.encode("utf-8")).hexdigest()
+            checked += 1
             if entry_hash != recomputed or prev_hash != prev:
-                return {"ok": False, "checked": len(rows), "first_bad": rid}
+                return {"ok": False, "checked": checked, "first_bad": rid}
             prev = entry_hash
-        return {"ok": True, "checked": len(rows), "first_bad": None}
+        return {"ok": True, "checked": checked, "first_bad": None}
 
     def recent(self, limit: int = 50) -> List[Dict[str, Any]]:
         rows = self._conn.execute(

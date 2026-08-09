@@ -234,10 +234,10 @@ async def _automation_loop() -> None:
                 now = time.time()
                 if now - _last_full_rotation >= settings.kms_rotation_days * 86400:
                     _last_full_rotation = now
-                    res = kms_manager.rotate_now()
+                    res = kms_manager.rotate_now(trigger="scheduled")
                     audit_log(
                         "KMS_ROTATE", "system", "kms_rotate", "kms", "SUCCESS",
-                        {"trigger": "auto", "new_key_id": res["new_key_id"]},
+                        {"trigger": "scheduled", "new_key_id": res["new_key_id"]},
                     )
                     logger.info(f"Auto KMS rotation complete: {res['new_key_id']}")
                     await _alert_webhook("kms_rotated", {"new_key_id": res["new_key_id"]})
@@ -1192,8 +1192,8 @@ async def kms_keys(user=Depends(require_role("gov-admin", "operator", "auditor")
 
 @app.post("/kms/rotate")
 async def kms_rotate(user=Depends(require_role("gov-admin"))):
-    result = kms_manager.rotate_now()
-    audit_log("KMS_ROTATE", user.get("sub", "unknown"), "kms_rotate", "kms", "SUCCESS", {"active_count": result["active_count"]})
+    result = kms_manager.rotate_now(trigger="manual")
+    audit_log("KMS_ROTATE", user.get("sub", "unknown"), "kms_rotate", "kms", "SUCCESS", {"trigger": "manual", "active_count": result["active_count"]})
     return result
 
 @app.get("/ssaf/monitor")
