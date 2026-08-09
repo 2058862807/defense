@@ -128,6 +128,27 @@ class ConnectionManager:
 manager = ConnectionManager()
 dashboard_manager = ConnectionManager()
 
+# --- SHARED TX BROADCAST (module level) ------------------------------ #
+# Reused by the WS mempool loop and by the manual /proof/request path so
+# proof status transitions reach every connected client immediately.
+_zk_proof_request_sem = asyncio.Semaphore(2)
+
+async def _broadcast_tx(real_tx: dict) -> None:
+    for conn in manager.active_connections:
+        try:
+            await conn.send_json({"type": "tx", "tx": real_tx, "transaction": real_tx})
+        except Exception:
+            pass
+    for conn in dashboard_manager.active_connections:
+        try:
+            await conn.send_json({
+                "type": "dashboard_update",
+                "transactions": [real_tx],
+                "metrics": live_store.get_metrics(),
+            })
+        except Exception:
+            pass
+
 # --- WS-ONLY BOT TRIGGER REGISTRY (B6) ----------------------------- #
 # Bots are armed/disarmed exclusively over /ws and /ws/dashboard and fired by
 # the single shared mempool listener. No HTTP polling path. Fail-closed: all
@@ -904,9 +925,13 @@ async def proof_status(tx_hash: str):
     audit_log("PROOF_STATUS", "dev-operator", "proof_status", tx_hash, "SUCCESS", {"status": payload["status"]})
     return payload
 
-@app.post("/proof/request/{tx_hash}")
+@app.post("/proof/request/{tx_hash}", status_code=202)
 async def proof_request(tx_hash: str, background_tasks: BackgroundTasks):
-    """Generate a real Groth16 proof for a real tx (from live mempool or chain)."""
+    """Queue a real Groth16 proof for a real tx - returns immediately (202).
+
+    Generation runs in the background; clients poll /proof/status/{tx_hash} and
+    receive the broadcast tx update when done/failed.
+    """
     tx = live_store.get_raw_transaction(tx_hash)
     if not tx:
         try:
@@ -936,51 +961,78 @@ async def proof_request(tx_hash: str, background_tasks: BackgroundTasks):
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found in live mempool or on chain")
 
+    def _sync_stored_tx(status: str, zk_package=None):
+        real_tx = live_store.get_transaction(tx_hash)
+        if real_tx:
+            real_tx["proof_status"] = status
+            if status == "done" and zk_package:
+                real_tx["proof"] = zk_package.get("zk_proof")
+                real_tx["zk_public_inputs"] = zk_package.get("zk_public_inputs", [])
+            return real_tx
+        base = {
+            "hash": tx_hash,
+            "txid": tx_hash,
+            "ledger": "ETH",
+            "risk_score": tx.get("risk_score", 50),
+            "decision": tx.get("decision", "pass"),
+            "proof_status": status,
+            "source": "proof_request",
+        }
+        if status == "done" and zk_package:
+            base["proof"] = zk_package.get("zk_proof")
+            base["zk_public_inputs"] = zk_package.get("zk_public_inputs", [])
+        return base
+
     def _prove():
-        try:
-            zk_package = xai_coupler.generate_zk_proof(tx)
-            live_store.record_proof_status(
-                tx_hash, "done",
-                proof=zk_package.get("zk_proof"),
-                zk_public_inputs=zk_package.get("zk_public_inputs", []),
-                duration_ms=0,
+        zk_package = xai_coupler.generate_zk_proof(tx)
+        if not zk_package.get("zk_proof"):
+            raise RuntimeError(
+                f"ZK proof returned empty (zk_status={zk_package.get('zk_status', 'FAILED')}) - fail closed"
             )
-            return zk_package
-        except Exception as e:
-            live_store.record_proof_status(tx_hash, "failed")
-            raise e
+        return zk_package
 
-    try:
-        zk_package = await asyncio.to_thread(_prove)
-    except Exception as e:
-        audit_log("PROOF_REQUEST", "dev-operator", "proof_request", tx_hash, "FAILURE", {"error": str(e)})
-        raise HTTPException(status_code=500, detail=f"Real proof generation failed - fail closed: {e}")
-
-    # Background: anchor the real proof on-chain (enterprise, retry-safe, audited)
-    def anchor_task():
-        import asyncio
-        from app.evm.fairness_registry import FairnessRegistryEnterprise
-        async def _anchor():
+    async def _generate():
+        async with _zk_proof_request_sem:
+            started = time.perf_counter()
             try:
-                reg = FairnessRegistryEnterprise()
-                txid = await reg.submit_proof(zk_package, is_offense=False)
-                logger.info(f"Proof anchored on-chain tx={txid} for {tx_hash}")
+                zk_package = await asyncio.to_thread(_prove)
+                duration_ms = (time.perf_counter() - started) * 1000.0
+                live_store.record_proof_status(
+                    tx_hash,
+                    "done",
+                    proof=zk_package.get("zk_proof"),
+                    zk_public_inputs=zk_package.get("zk_public_inputs", []),
+                    duration_ms=duration_ms,
+                )
+                _sync_stored_tx("done", zk_package)
+                await _broadcast_tx(_sync_stored_tx("done", zk_package))
+                logger.info(f"Manual ZK proof done for {tx_hash} ({duration_ms:.0f}ms)")
+
+                def anchor_task():
+                    import asyncio as _asyncio
+                    from app.evm.fairness_registry import FairnessRegistryEnterprise
+                    async def _anchor():
+                        try:
+                            reg = FairnessRegistryEnterprise()
+                            txid = await reg.submit_proof(zk_package, is_offense=False)
+                            logger.info(f"Proof anchored on-chain tx={txid} for {tx_hash}")
+                        except Exception as e:
+                            logger.error(f"Background on-chain anchoring failed for {tx_hash}: {e}")
+                    _asyncio.run(_anchor())
+
+                background_tasks.add_task(anchor_task)
             except Exception as e:
-                logger.error(f"Background on-chain anchoring failed for {tx_hash}: {e}")
-        asyncio.run(_anchor())
+                logger.error(f"Manual ZK proof failed for {tx_hash}: {e}")
+                live_store.record_proof_status(tx_hash, "failed")
+                await _broadcast_tx(_sync_stored_tx("failed"))
 
-    background_tasks.add_task(anchor_task)
-
+    live_store.record_proof_status(tx_hash, "pending")
+    background_tasks.add_task(_generate)
+    audit_log("PROOF_REQUEST", "dev-operator", "proof_request", tx_hash, "QUEUED", {"tx_hash": tx_hash})
     return {
-        "status": "done",
-        "proof": {
-            "commitment": (zk_package.get("zk_public_inputs") or [None, None, None])[1],
-            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        },
-        "zk_status": zk_package.get("zk_status"),
-        "score": zk_package.get("score"),
-        "fairness": zk_package.get("fairness"),
+        "status": "accepted",
         "tx_hash": tx_hash,
+        "detail": "ZK proof generation started in background - poll /proof/status/{tx_hash}",
     }
 
 @app.get("/proofs/ledger")

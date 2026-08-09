@@ -16,6 +16,7 @@ const COLUMNS = ['TX Hash', 'Ldg', 'Amount', 'Fee', 'I/O', 'Score', 'Decision', 
 
 const LiveMempoolTable = ({ transactions = [] }) => {
   const [expandedHash, setExpandedHash] = useState(null);
+  const [requestedHash, setRequestedHash] = useState(null);
 
   const getDecisionStyle = (decision) => {
     const d = (decision || '').toUpperCase();
@@ -208,10 +209,23 @@ const LiveMempoolTable = ({ transactions = [] }) => {
                     </>
                   )}
                   {(!tx.proofStatus || tx.proofStatus === 'none' || tx.proofStatus === 'failed' || tx.proofStatus === 'skipped') && (
+                    requestedHash === hash ? (
+                      <div style={{ position: 'absolute', right: '16px', top: '16px', color: '#ffbf00', fontWeight: 'bold', fontSize: '11px' }}>
+                        ⏳ QUEUED…
+                      </div>
+                    ) : (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        fetch(`/api/model/proof/request/${hash}`, { method: 'POST' });
+                        setRequestedHash(hash);
+                        fetch(`/api/model/proof/request/${hash}`, { method: 'POST' })
+                          .then((r) => {
+                            if (!r.ok) {
+                              setRequestedHash(null);
+                              console.warn('[ZK] proof request failed', r.status);
+                            }
+                          })
+                          .catch(() => setRequestedHash(null));
                       }}
                       style={{
                         position: 'absolute',
@@ -238,8 +252,9 @@ const LiveMempoolTable = ({ transactions = [] }) => {
                     >
                       REQUEST ZK PROOF
                     </button>
+                    )
                   )}
-                  {tx.proofStatus === 'proving' && (
+                  {(tx.proofStatus === 'proving' || tx.proofStatus === 'pending') && (
                     <div style={{ position: 'absolute', right: '16px', top: '16px', color: '#ffbf00', fontWeight: 'bold' }}>
                       ⟳ PROVING...
                     </div>

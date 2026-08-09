@@ -608,7 +608,7 @@ export function useLiveData() {
 
   // ── Proof status polling ──
   useEffect(() => {
-    const pending = (transactions || []).filter(t => t && t.decision !== 'PASS' && t.proofStatus === 'pending');
+    const pending = (transactions || []).filter(t => t && t.proofStatus === 'pending');
     if (pending.length === 0) return;
 
     const interval = setInterval(async () => {
