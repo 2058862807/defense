@@ -6,6 +6,7 @@ import { createServer as createHttpServer } from "http";
 import { createServer as createHttpsServer } from "https";
 import { WebSocketServer, WebSocket } from "ws";
 import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
+import zlib from "zlib";
 
 // Minimal real .env loader (no dependency needed) - never overrides process env.
 import { readFileSync, existsSync } from "fs";
@@ -91,10 +92,20 @@ function requestBackend(url: string, init: { method?: string; headers?: Record<s
         agent: u.protocol === "https:" ? backendTlsAgent : undefined,
       },
       (res) => {
-        let data = "";
-        res.setEncoding("utf8");
-        res.on("data", (c) => (data += c));
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
         res.on("end", () => {
+          const raw = Buffer.concat(chunks);
+          const encoding = (res.headers["content-encoding"] || "").toLowerCase();
+          let body = raw;
+          try {
+            if (encoding.includes("gzip")) body = zlib.gunzipSync(raw);
+            else if (encoding === "deflate") body = zlib.inflateSync(raw);
+            else if (encoding === "br") body = zlib.brotliDecompressSync(raw);
+          } catch (e) {
+            console.warn(`[Backend Proxy] Failed to decompress ${encoding} response from ${u.pathname}:`, (e as Error).message);
+          }
+          const data = body.toString("utf8");
           resolve({
             ok: res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300,
             status: res.statusCode as number,
@@ -179,7 +190,16 @@ async function proxyToRealBackend(req: express.Request, res: express.Response, t
 
     res.status(response.status);
     Object.entries(response.headers).forEach(([key, value]) => {
-      if (key.toLowerCase() !== "transfer-encoding" && value !== undefined) {
+      const lowerKey = key.toLowerCase();
+      // Body is decompressed and re-serialized below, so drop encoding/size
+      // headers and let Express recompute them, otherwise browsers fail to
+      // decode (content-encoding) or hang/truncate (stale content-length).
+      if (
+        lowerKey !== "transfer-encoding" &&
+        lowerKey !== "content-encoding" &&
+        lowerKey !== "content-length" &&
+        value !== undefined
+      ) {
         res.setHeader(key, value);
       }
     });
