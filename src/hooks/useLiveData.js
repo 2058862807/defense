@@ -16,6 +16,16 @@ const DECISION_COLORS = {
 };
 const DECISION_LABELS = { block: 'BLOCK', step: 'STEP', pass: 'PASS' };
 
+// Canonical proof statuses: pending | done | failed | skipped | none
+function canonicalProofStatus(raw) {
+  const s = (raw || 'none').toString().toLowerCase();
+  if (s === 'pending' || s === 'proof_pending' || s === 'proving') return 'pending';
+  if (s === 'done' || s === 'verified' || s === 'proved_real_groth16' || s === 'proved') return 'done';
+  if (s === 'failed' || s === 'proof_failed' || s === 'error') return 'failed';
+  if (s === 'skipped' || s === 'proof_skipped' || s === 'deferred') return 'skipped';
+  return 'none';
+}
+
 // Normalise a backend transaction to frontend format
 function normalizeTx(tx) {
   const numScore = Number(tx.risk_score ?? tx.score ?? 50) || 50;
@@ -30,10 +40,10 @@ function normalizeTx(tx) {
     txid: tx.txid ?? tx.hash ?? '',
     amount: numAmount,
     fee: numFee,
-    inputs: Number(tx.inputs ?? tx.input_count ?? 0) || 0,
-    outputs: Number(tx.outputs ?? tx.output_count ?? 0) || 0,
-    input_count: Number(tx.input_count ?? tx.inputs ?? 0) || 0,
-    output_count: Number(tx.output_count ?? tx.outputs ?? 0) || 0,
+    inputs: Number(tx.inputs ?? tx.input_count ?? (tx.from ? 1 : 0)) || 0,
+    outputs: Number(tx.outputs ?? tx.output_count ?? (tx.to ? 1 : 0)) || 0,
+    input_count: Number(tx.input_count ?? tx.inputs ?? (tx.from ? 1 : 0)) || 0,
+    output_count: Number(tx.output_count ?? tx.outputs ?? (tx.to ? 1 : 0)) || 0,
     riskScore: Math.round(numScore),
     score: Math.round(numScore),
     decision: (decision ?? 'pass').toUpperCase(),
@@ -42,7 +52,7 @@ function normalizeTx(tx) {
     shapVals: shapVals,
     timestamp: tx.timestamp ?? new Date().toISOString(),
     ledger: (tx.ledger ?? 'btc').toUpperCase(),
-    proofStatus: tx.proof_status ?? 'none',
+    proofStatus: canonicalProofStatus(tx.proof_status),
     proof: tx.proof ?? null,
     source: tx.source ?? 'ml',
     amount_btc: numAmount,
@@ -76,8 +86,6 @@ function buildInitialFromBackend(txs) {
       hash: '0000000000000000000000000000000000000000000000000000000000000000',
       amount: 0,
       fee: 0,
-      inputs: 0,
-      outputs: 0,
       riskScore: 0,
       score: 0,
       decision: 'PASS',
@@ -332,7 +340,7 @@ export function useLiveData() {
             console.log('[LiveData] WS welcome received — connection confirmed');
             setIsLive(true);
           } else if (data.type === 'bot_status') {
-            setBotStatus(data.bots || data);
+            setBotStatus(prev => ({ ...prev, ...(data.bots || data) }));
           } else if (data.type === 'dashboard_update' || data.type === 'snapshot') {
             handleDashboardUpdate(data);
           } else if (data.type === 'tx' || data.type === 'transaction' || data.transaction || data.tx) {
@@ -376,11 +384,10 @@ export function useLiveData() {
       if (data.transactions && Array.isArray(data.transactions)) {
         const normalized = data.transactions.map(normalizeTx);
         setTransactions(prev => {
-          const existing = new Map(prev.map(t => [t.hash, t]));
-          for (const tx of normalized) {
-            existing.set(tx.hash, tx);
-          }
-          return Array.from(existing.values()).slice(-200);
+          const merged = new Map();
+          for (const tx of normalized) merged.set(tx.hash, tx);
+          for (const tx of prev) if (!merged.has(tx.hash)) merged.set(tx.hash, tx);
+          return Array.from(merged.values()).slice(0, 200);
         });
 
         // Track TPS
@@ -448,11 +455,10 @@ export function useLiveData() {
           if (dashData.transactions && Array.isArray(dashData.transactions) && dashData.transactions.length > 0) {
             const normalized = dashData.transactions.map(normalizeTx);
             setTransactions(prev => {
-              const existing = new Map(prev.map(t => [t.hash, t]));
-              for (const tx of normalized) {
-                existing.set(tx.hash, tx);
-              }
-              return Array.from(existing.values()).slice(-200);
+              const merged = new Map();
+              for (const tx of normalized) merged.set(tx.hash, tx);
+              for (const tx of prev) if (!merged.has(tx.hash)) merged.set(tx.hash, tx);
+              return Array.from(merged.values()).slice(0, 200);
             });
           }
         }
@@ -462,7 +468,7 @@ export function useLiveData() {
 
       // ── COMPOSITE_RISK_FUSION monitor ──
       try {
-        const compositeRiskFusionResp = await fetch(`${API_COMPOSITE_RISK_FUSION}/compositeRiskFusion/monitor`);
+        const compositeRiskFusionResp = await fetch(`${API_COMPOSITE_RISK_FUSION}/ssaf/monitor`);
         if (compositeRiskFusionResp.ok && !cancelled) {
           const compositeRiskFusionDataJson = await compositeRiskFusionResp.json();
           setCompositeRiskFusionData(buildCompositeRiskFusionDataFromBackend(compositeRiskFusionDataJson));
@@ -572,7 +578,7 @@ export function useLiveData() {
           id: `proof-${entry.tx_hash?.substring(0, 8) ?? i}`,
           txHash: entry.tx_hash,
           decision: entry.decision,
-          riskScore: riskByHash.get(entry.tx_hash),
+          riskScore: entry.risk_score ?? riskByHash.get(entry.tx_hash),
           commitment: entry.commitment,
           generated: entry.generated_at,
           verified: !!entry.verified,

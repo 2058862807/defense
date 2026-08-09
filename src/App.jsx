@@ -563,7 +563,7 @@ function GlobeView({ data }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: 'calc(100vh - 100px)' }}>
       <div style={styles.kpiStrip}>
         <KPICard label="Active Arcs" value={globeData.length} trend="3D Mempool" color="var(--neon-cyan)" />
-        <KPICard label="TradFi TX" value={tradfiCount} trend="SWIFT / Fedwire / SEPA" color="var(--neon-gold)" />
+        <KPICard label="TradFi TX" value={tradfiCount > 0 ? tradfiCount : '—'} trend={tradfiCount > 0 ? "SWIFT / Fedwire / SEPA" : "No TradFi traffic in EVM mempool"} color="var(--neon-gold)" />
         <KPICard label="Risk Score" value={(Number(metrics.riskScore) || 0).toFixed(1)} trend="Avg Risk" color="var(--neon-red)" />
         <KPICard label="Quantum Nodes" value="17" trend="Financial Hubs" color="var(--neon-green)" />
       </div>

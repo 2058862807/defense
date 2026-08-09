@@ -110,7 +110,7 @@ class LiveFeedStore:
         zk_public_inputs: Optional[list] = None,
         duration_ms: Optional[float] = None,
     ) -> None:
-        """Record ZK proof lifecycle: pending -> done|failed."""
+        """Record ZK proof lifecycle: pending -> done|failed (skipped = deferred)."""
         if not tx_hash:
             return
         with self._lock:
@@ -122,22 +122,29 @@ class LiveFeedStore:
                 entry = prior
                 entry["updated"] = time.time()
 
-            # Only count a terminal state once per hash. A fresh entry created
-            # directly with a terminal status still counts exactly once.
-            if prior is not None and prior.get("status") in ("done", "failed") and status in ("done", "failed"):
-                if status == "done" and prior.get("status") != "done":
-                    self._proof_count += 1
-                    self._proof_failed_count = max(0, self._proof_failed_count - 1)
-                return
+            prev_status = entry.get("status")
+
+            # Leaving a terminal state (re-prove, or done -> failed on a retry)
+            # must undo the previous terminal accounting so each terminal
+            # transition is counted exactly once.
+            if prev_status == "done" and status != "done":
+                self._proof_count = max(0, self._proof_count - 1)
+            if prev_status == "failed" and status != "failed":
+                self._proof_failed_count = max(0, self._proof_failed_count - 1)
 
             if status == "done":
-                self._proof_count += 1
+                if prev_status != "done":
+                    self._proof_count += 1
                 self._proof_latest_ms = duration_ms if duration_ms is not None else self._proof_latest_ms
                 # CircuitIngestor.generate_proof runs `snarkjs groth16 verify`
                 # (fail-closed) BEFORE a proof is marked done - so done implies verified.
                 entry["verified"] = True
             elif status == "failed":
-                self._proof_failed_count += 1
+                if prev_status != "failed":
+                    self._proof_failed_count += 1
+                entry.pop("verified", None)
+            else:  # pending / skipped
+                entry.pop("verified", None)
 
             entry["status"] = status
             if proof is not None:
@@ -203,13 +210,21 @@ class LiveFeedStore:
             entries.sort(key=lambda e: e.get("updated", 0), reverse=True)
             ledger = []
             for e in entries[:limit]:
-                tx = self._raw_transactions.get(e.get("tx_hash"), {})
+                hash_key = e.get("tx_hash")
+                # Decision + risk score live on the scored tx (real_tx), not the
+                # raw parse - look there first so the ledger is always populated.
+                scored = next(
+                    (t for t in self._transactions if (t.get("hash") or t.get("txid")) == hash_key),
+                    {},
+                )
+                tx = self._raw_transactions.get(hash_key, {})
                 ledger.append({
-                    "tx_hash": e.get("tx_hash"),
+                    "tx_hash": hash_key,
                     "status": e.get("status"),
                     "proof_exists": e.get("status") == "done" and bool(e.get("proof")),
                     "verified": e.get("verified", False),
-                    "decision": tx.get("decision", ""),
+                    "decision": scored.get("decision") or tx.get("decision") or "",
+                    "risk_score": scored.get("risk_score"),
                     "commitment": (e.get("zk_public_inputs") or [None, None, None])[1],
                     "duration_ms": e.get("duration_ms"),
                     "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(e.get("updated", 0))),

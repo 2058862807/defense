@@ -323,17 +323,25 @@ async def _ensure_shared_mempool():
 
         async def _prove_and_update(tx, real_tx):
             nonlocal _pending_proofs
+            tx_hash = tx.get("hash") or real_tx.get("hash") or real_tx.get("txid")
             if _pending_proofs >= _MAX_PENDING_PROOFS:
+                logger.warning(f"ZK proof queue saturated ({_MAX_PENDING_PROOFS} in flight) - marking {tx_hash} skipped")
+                real_tx["proof_status"] = "skipped"
+                live_store.record_proof_status(tx_hash, "skipped")
+                await _broadcast(real_tx)
                 return
             _pending_proofs += 1
-            tx_hash = tx.get("hash") or real_tx.get("hash") or real_tx.get("txid")
             started = time.perf_counter()
             live_store.record_proof_status(tx_hash, "pending")
             try:
                 async with _zk_proof_sem:
                     zk_package = await asyncio.to_thread(xai_coupler.generate_zk_proof, tx)
                 duration_ms = (time.perf_counter() - started) * 1000.0
-                real_tx["proof_status"] = zk_package.get("zk_status", "PROVED_REAL_GROTH16")
+                if not zk_package.get("zk_proof"):
+                    raise RuntimeError(
+                        f"ZK proof returned empty (zk_status={zk_package.get('zk_status', 'FAILED')}) - degraded path must not mark done"
+                    )
+                real_tx["proof_status"] = "done"
                 real_tx["proof"] = zk_package.get("zk_proof")
                 real_tx["zk_public_inputs"] = zk_package.get("zk_public_inputs", [])
                 live_store.record_proof_status(
@@ -346,7 +354,12 @@ async def _ensure_shared_mempool():
                 await _broadcast(real_tx)
             except Exception as e:
                 logger.error(f"Background ZK proof failed for {tx.get('hash', '')}: {e}")
+                real_tx["proof_status"] = "failed"
                 live_store.record_proof_status(tx_hash, "failed")
+                try:
+                    await _broadcast(real_tx)
+                except Exception:
+                    pass
             finally:
                 _pending_proofs -= 1
 
@@ -375,7 +388,9 @@ async def _ensure_shared_mempool():
                         "amount_btc": tx.get("value_eth", 0),
                         "fee_rate": tx.get("gas_price_gwei", 0),
                         "timestamp": tx.get("timestamp") or __import__("datetime").datetime.utcnow().isoformat(),
-                        "proof_status": "PROOF_PENDING",
+                        "from": tx.get("from"),
+                        "to": tx.get("to"),
+                        "proof_status": "pending",
                         "proof": None,
                         "compliance": compliance,
                         "explanation": explanation,
@@ -384,10 +399,14 @@ async def _ensure_shared_mempool():
 
                 real_tx = await asyncio.to_thread(_process)
 
+                if (real_tx.get("decision") or "pass").lower() == "pass":
+                    real_tx["proof_status"] = "skipped"
+
                 live_store.record_tx(real_tx)
                 live_store.record_raw_tx(tx)
                 await _broadcast(real_tx)
-                asyncio.create_task(_prove_and_update(tx, real_tx))
+                if (real_tx.get("decision") or "pass").lower() != "pass":
+                    asyncio.create_task(_prove_and_update(tx, real_tx))
                 await _maybe_trigger_bots(real_tx, tx)
 
                 attempt = intel_detector.analyze_pending_tx(tx)
@@ -858,23 +877,25 @@ async def dashboard_live():
 
 def _proof_status_payload(tx_hash: str) -> Dict[str, Any]:
     entry = live_store.get_proof_status(tx_hash)
-    if not entry or entry.get("status") not in ("pending", "done", "failed"):
+    if not entry or entry.get("status") not in ("pending", "done", "failed", "skipped"):
         return {"status": "none", "proof": None, "tx_hash": tx_hash}
-    if entry.get("status") == "pending":
-        return {"status": "pending", "proof": None, "tx_hash": tx_hash}
-    if entry.get("status") == "failed":
+    status = entry.get("status")
+    if status in ("pending", "skipped"):
+        return {"status": status, "proof": None, "tx_hash": tx_hash}
+    if status == "failed":
         return {"status": "failed", "proof": None, "tx_hash": tx_hash, "error": "Real Groth16 proof generation failed - fail closed"}
     public_inputs = entry.get("zk_public_inputs") or []
     commitment = public_inputs[1] if len(public_inputs) > 1 else None
     return {
         "status": "done",
         "tx_hash": tx_hash,
-        "proof": {
+        "proof": entry.get("proof"),
+        "integrity": {
+            "verified": bool(entry.get("verified", False)),
             "commitment": commitment,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(entry.get("updated", time.time()))),
             "public_inputs": public_inputs,
         },
-        "integrity": {"verified": bool(entry.get("verified", False))},
     }
 
 @app.get("/proof/status/{tx_hash}")

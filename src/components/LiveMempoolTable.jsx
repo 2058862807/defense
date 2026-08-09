@@ -45,6 +45,7 @@ const LiveMempoolTable = ({ transactions = [] }) => {
       case 'proving': return { label: '⟳', color: '#ffbf00' };
       case 'pending': return { label: '⏳', color: '#ffbf00' };
       case 'failed': return { label: '⚠', color: '#ff3355' };
+      case 'skipped': return { label: '⏭', color: '#777' };
       default: return { label: '—', color: '#555' };
     }
   };
@@ -140,7 +141,7 @@ const LiveMempoolTable = ({ transactions = [] }) => {
                 <div style={{ color: '#888' }}>{ledger}</div>
                 <div>{amount}</div>
                 <div>{typeof fee === 'number' ? fee.toFixed(2) : fee}</div>
-                <div>{tx.inputs != null && tx.outputs != null ? `${tx.inputs}/${tx.outputs}` : '—'}</div>
+                <div>{tx.inputs || tx.outputs ? `${tx.inputs ?? 0}/${tx.outputs ?? 0}` : '—'}</div>
                 <div>
                   <span
                     style={{
@@ -206,7 +207,7 @@ const LiveMempoolTable = ({ transactions = [] }) => {
                       </div>
                     </>
                   )}
-                  {(!tx.proofStatus || tx.proofStatus === 'none' || tx.proofStatus === 'failed') && (
+                  {(!tx.proofStatus || tx.proofStatus === 'none' || tx.proofStatus === 'failed' || tx.proofStatus === 'skipped') && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
